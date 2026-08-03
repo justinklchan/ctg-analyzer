@@ -18,6 +18,10 @@
        red/green force pair rather than the SHAP pink/blue. */
     --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
     --surface:#fcfcfb; --warm:#f0efec; --panel:#ffffff; --sel:#2a78d6; --ink2:#52514e; --ink3:#8a8880; --fhr:#c2185b;
+    /* One content measure for the whole page. Every panel is exactly this
+       wide, so the metadata, the waterfall, the trajectory and the table read
+       as one column rather than four blocks that each found their own edge. */
+    --maxw:1520px;
   }
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
@@ -25,8 +29,23 @@
   select,input,button,textarea{font-family:inherit}
   #wrap{display:flex;min-height:100vh}
   #side{width:290px;flex:none;border-right:1px solid var(--line);padding:16px 14px;
-        position:sticky;top:0;height:100vh;overflow:auto;background:var(--warm)}
-  #main{flex:1;min-width:0;padding:14px 20px 40px}
+        position:sticky;top:0;height:100vh;overflow:auto;background:var(--warm);
+        transition:width .18s ease, padding .18s ease}
+  #main{flex:1;min-width:0;padding:14px 20px 40px;transition:padding .18s ease}
+  /* Collapsing the sidebar hands the whole width to the charts. The controls
+     are not thrown away, only hidden -- reopening restores the same state. */
+  body.side-hidden #side{width:0;padding-left:0;padding-right:0;border-right:0;overflow:hidden}
+  body.side-hidden #side > *{display:none}
+  /* Padded on both sides, or the centred content column would sit off centre
+     by exactly the width of the toggle it is making room for. */
+  body.side-hidden #main{padding-left:56px;padding-right:56px}
+  #sidetoggle{position:fixed;top:12px;left:250px;z-index:30;width:30px;height:30px;
+    display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;
+    border:1px solid var(--line);border-radius:9px;background:var(--panel);
+    color:var(--mut);font-size:15px;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.08);
+    transition:left .18s ease}
+  #sidetoggle:hover{color:var(--ink);border-color:var(--ink3)}
+  body.side-hidden #sidetoggle{left:12px}
   h1{font-size:26px;margin:0 0 6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   h2{font-size:19px;margin:20px 0 6px}
   h3{font-size:15px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
@@ -46,18 +65,23 @@
     border-radius:10px;background:var(--panel);color:var(--ink);margin-bottom:10px}
   #picker{max-height:420px;overflow:auto;border:1px solid var(--line);
     border-radius:12px;background:var(--panel)}
-  /* One line per record: dot, id, then the facts that decide whether it is
-     worth opening -- cord pH and how long the trace runs. */
+  /* One line per record: dot, id, the odds ratio at delivery, then the facts
+     that decide whether it is worth opening -- cord pH and how long the trace
+     runs. The odds ratio is what the list is sorted by, so it has to be on the
+     line; a sort you cannot see the key for reads as an arbitrary order. */
   #picker .row{display:flex;align-items:center;gap:10px;padding:9px 12px;
     cursor:pointer;border-bottom:1px solid var(--line);font-size:15px}
   #picker .row:last-child{border-bottom:0}
   #picker .row:hover{background:var(--warm)}
   #picker .dot{width:9px;height:9px;border-radius:50%;flex:none}
   #picker .rid{font-weight:700;font-variant-numeric:tabular-nums}
+  #picker .or{font-weight:700;font-size:13.5px;font-variant-numeric:tabular-nums;
+    white-space:nowrap;padding:1px 7px;border-radius:999px;line-height:1.5}
   #picker .meta{margin-left:auto;color:var(--mut);font-size:13.5px;
     font-variant-numeric:tabular-nums;white-space:nowrap}
   #picker .row.sel{background:var(--sel);color:#fff}
   #picker .row.sel .meta{color:#eaf2ff}
+  #picker .row.sel .or{background:rgba(255,255,255,.18)!important;color:#fff!important}
   .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
   /* Columns size to their contents. Every cell is nowrap so a column is exactly
      as wide as its widest value, except the description, which wraps and takes
@@ -73,16 +97,118 @@
   th.sortable.on{color:var(--sel)}
   td.wrap,th.wrap{white-space:normal;width:auto;min-width:22ch}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* Feature and Window are the only prose in the table. They fold when the row
+     would otherwise be wider than the panel, so the last numeric column stays
+     inside the card instead of being cut off at its edge. The numbers never
+     fold -- a wrapped figure is unreadable in a way a wrapped phrase is not. */
+  #tbl td:nth-child(3),#tbl th:nth-child(3),
+  #tbl td:nth-child(4),#tbl th:nth-child(4){white-space:normal;width:auto}
+  /* What a feature measures is reference material, not something to scan down
+     a column: it is one wrapped paragraph per row that pushed every number to
+     the right. It lives in a hover tip instead, so the table stays numeric. */
+  #tbl tr[data-feat]{cursor:help}
+  #tbl tr[data-feat]:hover{background:var(--warm)}
+  /* A pooled chip hides a list, so it says so on approach. */
+  .chipbox[data-pool] .chip,.chipbox[data-pool] small{cursor:help}
+  /* The scrubber reads as part of the figure, so it sits flush under it and
+     borrows the x-axis's left margin -- the thumb then lines up with the
+     cursor line it is driving instead of floating out at the card edge. */
+  #scrub{margin:2px 0 2px}
+  /* The figure's own margins are l:56 r:14, so the plotting rectangle runs
+     from 56px to 14px-from-the-right. The track is inset by half a thumb less
+     than that at each end, because what marks the minute is the CENTRE of the
+     thumb, and a range input's thumb centre travels from half-a-thumb-in to
+     half-a-thumb-from-the-end. Without the correction the slider is the right
+     width but every position is off by up to 7px. */
+  #scrubtrack{padding-left:calc(56px - 7px);padding-right:calc(14px - 7px)}
+  #cursor{display:block;width:100%;margin:0;height:14px;cursor:pointer;
+    -webkit-appearance:none;appearance:none;background:transparent}
+  /* Thumb sized here rather than left to the platform, since the 7px above is
+     only correct if the thumb really is 14px wide. */
+  #cursor::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--line)}
+  #cursor::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
+    margin-top:-5px;border-radius:50%;background:var(--sel);border:2px solid #fff;
+    box-shadow:0 0 0 1px var(--line)}
+  #cursor::-moz-range-track{height:4px;border-radius:2px;background:var(--line)}
+  #cursor::-moz-range-thumb{width:14px;height:14px;box-sizing:border-box;
+    border-radius:50%;background:var(--sel);border:2px solid #fff}
+  #scrubmeta{display:flex;align-items:center;gap:10px;
+    padding-left:56px;padding-right:14px}
+  #scrublab{margin-left:auto;font-size:13.5px;
+    color:var(--mut);font-variant-numeric:tabular-nums}
+  #zoomctl{flex:none;display:flex;gap:4px}
+  #zoomctl button{height:26px;min-width:26px;padding:0 7px;cursor:pointer;
+    border:1px solid var(--line);border-radius:7px;background:var(--panel);
+    color:var(--mut);font-size:13px;line-height:1}
+  #zoomctl button:hover:not(:disabled){color:var(--ink);border-color:var(--ink3)}
+  #zoomctl button:disabled{opacity:.4;cursor:default}
+  /* Plotly's drag layer keeps its own cursor, so the affordance has to be set
+     here. `panning` is on <body> because the pointer may leave the figure
+     while the button is still down. */
+  #fig .nsewdrag,#fig .drag{cursor:grab}
+  body.panning,body.panning #fig .nsewdrag,body.panning #fig .drag{cursor:grabbing}
+  body.panning{user-select:none}
+  #winpills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
+  #winpills .pill{font-size:13px;padding:5px 12px}
+  #winpills .pill .n{opacity:.6;font-weight:400;margin-left:5px}
+  #tip{position:fixed;z-index:60;max-width:340px;padding:9px 12px;border-radius:10px;
+    background:#141312;color:#f7f6f3;font-size:13.5px;line-height:1.45;
+    box-shadow:0 6px 20px rgba(0,0,0,.22);pointer-events:none;
+    opacity:0;visibility:hidden;transition:opacity .12s ease}
+  #tip.on{opacity:1;visibility:visible}
+  #tip b{color:#fff}
+  #tip .u{color:#b9b6ae}
   .chip{display:inline-block;border:2.5px solid var(--up);border-radius:12px;padding:5px 11px;
-        font-weight:800;font-size:20px;color:var(--up);margin:0 3px}
+        font-weight:800;font-size:22px;color:var(--up);margin:0 2px}
   .chip.dn{border-color:var(--down);color:var(--down)}
   .chip.tot{background:var(--up);color:#fff}
-  .chipwrap{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
-  .chipbox{text-align:center}
-  .chipbox small{display:block;color:var(--mut);font-size:12px;margin-top:3px;max-width:150px}
+  /* ONE LINE. The row is a sentence -- base × factor × factor = odds ratio --
+     and a sentence that folds onto a second line stops reading as a product.
+     The captions are narrow enough that the ten terms fit the measure; if the
+     window is ever too small for that, the row scrolls rather than folds. */
+  /* TWO ROWS, NOT TEN BOXES. As a flex row each term was centred on its own
+     height, so a caption that ran to three lines pushed its number out of line
+     with its neighbours and the × signs scattered. A grid with two explicit
+     rows puts every chip on row one and every caption on row two, whatever the
+     captions do: the chipbox is display:contents so its chip and caption drop
+     into the grid directly, and each part names its row, so the × lands beside
+     the numbers rather than below them. */
+  .chipwrap{display:grid;grid-auto-flow:column;grid-template-rows:auto auto;
+    align-items:start;justify-content:center;column-gap:5px;overflow-x:auto;
+    margin:14px 0 2px;padding-bottom:2px}
+  .chipbox{display:contents}
+  .chipwrap .chip{grid-row:1;justify-self:center;align-self:center}
+  /* A FIXED CAPTION BOX. Which features are in the top six changes as the
+     cursor moves, and their names run to anywhere between two and five lines,
+     so the caption row -- and with it the whole panel -- changed height on
+     every click and the figure below it jumped. Four lines is the tallest
+     caption the feature names produce at this width; holding every caption to
+     that height costs a little white space and buys a panel that does not
+     move. Five, not four: four is the tallest caption seen, and a caption that
+     needs a fifth line would lose it silently. */
+  .chipbox small{grid-row:2;display:block;justify-self:center;text-align:center;
+    color:var(--mut);font-size:13.5px;line-height:1.35;margin-top:3px;
+    max-width:133px;height:6.75em;overflow:hidden}
+  .chipwrap .sep{grid-row:1;align-self:center;color:#9e9e9e;font-size:22px}
+
+  /* THE ONE MEASURE. Everything in the main pane lives inside #col, so the
+     metadata, both charts and the table start and end on the same two
+     vertical lines instead of each sizing itself to its own content. */
+  #col{width:100%;max-width:var(--maxw);margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.035)}
+  .card > h2:first-child{margin-top:0}
+  .card > .cap:last-child{margin-bottom:0}
+  /* A table can genuinely need more room than the measure allows. It scrolls
+     inside its own panel rather than pushing the page wider than everything
+     else -- an overflowing table was the loudest of the mismatched widths. */
+  .tablewrap{overflow-x:auto}
+  .foot{margin:18px 2px 0}
 </style>
 </head>
 <body>
+<button id="sidetoggle" type="button" title="Hide the sidebar"
+        aria-controls="side" aria-expanded="true">&#10094;</button>
 <div id="wrap">
   <div id="side">
     <h3>Baseline risk</h3>
@@ -113,17 +239,55 @@
   </div>
 
   <div id="main">
+   <div id="col">
     <h1 id="title">Loading…</h1>
-    <p class="cap" id="headline"></p>
-    <h2>Clinical metadata</h2>
-    <div id="meta"></div>
-    <div id="bar"></div>
-    <p class="cap" id="barcap"></p>
-    <div class="chipwrap" id="chips"></div>
-    <div id="fig"></div>
-    <h2>All feature contributions</h2>
-    <div id="tbl"></div>
-    <p class="cap" style="margin-top:22px">
+
+    <section class="card">
+      <h2>Clinical metadata</h2>
+      <div id="meta"></div>
+    </section>
+
+    <section class="card">
+      <h2>What moves the odds at this minute</h2>
+      <div id="bar"></div>
+      <div class="chipwrap" id="chips"></div>
+    </section>
+
+    <section class="card">
+      <h2>Risk trajectory and tracing</h2>
+      <div id="fig"></div>
+      <!-- The same cursor as clicking the curve, scrubbable. Clicking is exact
+           but only reaches minutes you can see; the slider walks every one. -->
+      <div id="scrub">
+        <!-- The track gets a row to itself so nothing else can eat into its
+             width: it has to span the plotting rectangle exactly, or the thumb
+             stops somewhere other than the minute it points at. -->
+        <div id="scrubtrack">
+          <input type="range" id="cursor" min="0" max="0" step="1" value="0"
+                 aria-label="Minute of the recording to read">
+        </div>
+        <div id="scrubmeta">
+          <span id="scrublab"></span>
+          <!-- The same zoom the wheel does, for anyone without one. The keys
+               + / - / 0 do it too, anywhere outside a text field. -->
+          <span id="zoomctl">
+            <button id="zoomout" type="button" title="Zoom out (−)">&minus;</button>
+            <button id="zoomin"  type="button" title="Zoom in (+)">+</button>
+            <button id="zoomfit" type="button" title="Fit the whole recording (0)">Fit</button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>All feature contributions</h2>
+      <!-- Filled from META.windows, so the choices are exactly the spans the
+           feature set actually contains rather than a hard-coded guess. -->
+      <div id="winpills"></div>
+      <div class="tablewrap"><div id="tbl"></div></div>
+    </section>
+
+    <p class="cap foot">
       Out-of-fold predictions under record-grouped cross-validation: no record was
       ever scored by a model that saw it. The only label is cord pH at birth, so a
       value here is “given what is known at this minute, this baby ends acidaemic
@@ -133,6 +297,7 @@
       you select; the absolute probability rests on that assumption, the ratio does
       not. Cohort: CTU-CHB, 512 records with clinician annotations, 32% acidaemic.
     </p>
+   </div>
   </div>
 </div>
 
@@ -142,34 +307,86 @@ const FAM = {
   'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
   'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
   'Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
-/* A CONCERN RAMP, not a categorical scale: green reassuring, amber benign,
-   orange context-dependent, red concerning, dark red urgent. The four
-   deceleration subtypes are four different physiological stories, so three
-   shades of one red would hide the distinction that carries the meaning.
-   The family anchors still hold where an event maps onto a feature family. */
+/* The strip shows the three things a tracing is actually read by: the
+   baseline, the accelerations, and the decelerations typed against the
+   contraction that may have caused them. Contractions have their own panel and
+   do not need to be painted over the FHR as well.
+
+   A CONCERN RAMP, not a categorical scale: green reassuring, amber benign,
+   orange context-dependent, red concerning. The deceleration subtypes are
+   different physiological stories, so shades of one red would hide the
+   distinction that carries the meaning. */
 const EVC = {
-  contraction:  FAM['Uterine activity'],
   acceleration: FAM['Accelerations'],
-  deceleration: FAM['Decelerations'],
   early:'#ffd166', variable:'#f4832f', late:FAM['Decelerations'],
-  prolonged:'#76161f', uncertain:'#c4c4c4', suspected_loss:'#9e9e9e',
+  prolonged:'#76161f', contraction: FAM['Uterine activity'],
   tachycardia:'#30566e', bradycardia:'#7da3ba'};
+/* Drawn in this order so the legend reads as the concern ramp does. */
+const EVORDER = ['acceleration','early','variable','late','prolonged',
+                 'tachycardia','bradycardia','contraction'];
+const ELAB = {
+  acceleration:'Acceleration', early:'Early decel', variable:'Variable decel',
+  late:'Late decel', prolonged:'Prolonged decel', contraction:'Contraction',
+  tachycardia:'Tachycardia', bradycardia:'Bradycardia'};
 /* The mechanism each pattern is thought to reflect -- the reason the typing
-   matters at all, and what the hover label says. */
+   matters at all, and what the hover label says. Keyed by the detector's own
+   subtype. Decelerations it could not type are not exported at all, so there
+   is no grey catch-all here any more. */
 const ETIO = {
   acceleration:'Intact autonomic response — reassuring',
   early:'Head compression → vagal reflex. Benign; mirrors the contraction',
   variable:'Cord compression. Context-dependent',
   late:'Uteroplacental insufficiency — concerning',
-  prolonged:'Sustained interruption of supply — urgent',
-  uncertain:'Deceleration the annotator did not type',
-  deceleration:'Deceleration', contraction:'Uterine contraction',
-  suspected_loss:'Recovered from signal loss — nadir estimated, not observed',
-  tachycardia:'Baseline above 160 bpm', bradycardia:'Baseline below 110 bpm'};
+  prolonged:'Over three minutes — sustained interruption of supply, urgent',
+  contraction:'Uterine contraction',
+  tachycardia:'Baseline above 160 bpm for ten minutes or more',
+  bradycardia:'Baseline below 110 bpm for ten minutes or more'};
+/* The FHR panel's y range, fixed so an event band can be drawn in data
+   coordinates and still fill the panel. */
+const FHR_RANGE = [50, 210];
+/* Tachycardia and bradycardia are states OF the baseline, not excursions from
+   it, so their bands are drawn in the bpm zone that defines them rather than
+   over the full panel: the shading then says WHERE the baseline is, and does
+   not compete with the accel and decel bands it may overlap. */
+const BAND_Y = {tachycardia:[160,FHR_RANGE[1]], bradycardia:[FHR_RANGE[0],110]};
+/* Panel bands, named once. The deceleration-to-contraction ties are drawn in
+   paper coordinates because they start in the FHR panel and end in the UC one,
+   so the two domains have to be readable from outside the layout literal that
+   sets them. */
+const FHR_DOM = [0.24, 0.48], UC_DOM = [0, 0.20];
+
+/* Plotly wants a fillcolor with its own alpha; the palette is hex. */
+function rgba(hex, a){
+  const h = hex.replace('#','');
+  const n = parseInt(h.length===3 ? h.split('').map(c=>c+c).join('') : h, 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+/* What a band says when the cursor is anywhere inside it. */
+function evLabel(e){
+  return `<b>${ELAB[e.d]||e.d}</b><br>`
+    + `${(-e.b).toFixed(1)} → ${(-e.a).toFixed(1)} min before delivery<br>`
+    + `${((e.b-e.a)*60).toFixed(0)} s`
+    + (ETIO[e.s] ? `<br><i>${ETIO[e.s]}</i>` : '');
+}
 const UP='#e34948', DOWN='#008300', FHRC='#c2185b';
+/* Chart furniture. SECOND is deliberately outside the event palette: the
+   second stage is a fact about the labour, not something a detector found. */
+const GUIDE='#151515', SECOND='#7b52c4';
 /* Plotly does not inherit the page font, so the charts have to be told. */
 const PLOT_FONT='Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
 let META=null, REC=null, NOW=0, BASE_LO=0, LOGOR=[];
+/* The stretch of time the user has zoomed to, as [lo,hi] in minutes before
+   delivery. Held outside drawFig so that moving the cursor never moves the
+   axis, and so a zoom survives the redraw the next cursor move triggers.
+   Null means "fit the recording".
+
+   Time only. The y axes are fixedrange: bpm, UC and odds all have a meaning a
+   reader is expected to hold constant while scrubbing, and a chart whose
+   vertical scale silently changed under a wheel would make two minutes of the
+   same recording look unlike each other. */
+let ZX=null;
+/* The x extent of the whole record, in data units. Written by drawFig. */
+let FIT=[0,1];
 
 const logit = p => Math.log(p/(1-p));
 const fmtx  = v => v.toFixed(2)+'×';
@@ -230,7 +447,76 @@ function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
 function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
 function meaning(f){ const d=META.doc[f]; return d? d[2] : ''; }
 
+/* Collapsing the sidebar is a layout change Plotly cannot see, so every chart
+   has to be told to re-measure once the width transition has finished. The
+   choice is remembered, because a user who wants the charts wide wants them
+   wide on the next record too. */
+function setSidebar(hidden){
+  document.body.classList.toggle('side-hidden', hidden);
+  const b = document.getElementById('sidetoggle');
+  b.innerHTML = hidden ? '&#10095;' : '&#10094;';
+  b.title = hidden ? 'Show the sidebar' : 'Hide the sidebar';
+  b.setAttribute('aria-expanded', String(!hidden));
+  try{ localStorage.setItem('ctg.sidebar', hidden ? 'hidden' : 'shown'); }catch(e){}
+  setTimeout(()=>{
+    ['fig','bar'].forEach(id=>{
+      const gd = document.getElementById(id);
+      if(gd && gd.data && window.Plotly) Plotly.Plots.resize(gd);
+    });
+  }, 200);
+}
+
 async function boot(){
+  const tog = document.getElementById('sidetoggle');
+  let hid = false;
+  try{ hid = localStorage.getItem('ctg.sidebar')==='hidden'; }catch(e){}
+  setSidebar(hid);
+  tog.onclick = ()=> setSidebar(!document.body.classList.contains('side-hidden'));
+
+  /* Dragging fires input on every pixel, and a redraw is two Plotly.react
+     calls plus a table rebuild. Coalescing to one frame keeps the drag smooth
+     instead of queueing renders the user has already scrubbed past. */
+  const sc = document.getElementById('cursor');
+  let pending = null;
+  sc.oninput = ()=>{
+    const v = +sc.value;
+    if(pending!==null) { pending = v; return; }
+    pending = v;
+    requestAnimationFrame(()=>{ const t=pending; pending=null; setNow(t); });
+  };
+
+  /* Left and right walk the cursor a minute at a time, so the red dot can be
+     moved without reaching for the slider. Typing in the sidebar's fields is
+     left alone, and so is the slider itself -- a focused range input already
+     steps on an arrow, and handling it here as well would move it twice. */
+  /* + and - zoom the same axis the wheel and the buttons do, and 0 fits.
+     Deliberately NOT the browser's cmd/ctrl +/-, which stays page zoom. */
+  document.addEventListener('keydown', ev=>{
+    const zoomKey = ev.key==='+' || ev.key==='=' || ev.key==='-'
+                 || ev.key==='_' || ev.key==='0';
+    if(!zoomKey && ev.key!=='ArrowLeft' && ev.key!=='ArrowRight') return;
+    if(ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const t = ev.target;
+    if(t && (t.isContentEditable ||
+             (t.matches && t.matches('input,select,textarea')))) return;
+    if(!REC) return;
+    ev.preventDefault();
+    if(ev.key==='0') zoomFit();
+    else if(ev.key==='+' || ev.key==='=') zoomBy(1/ZOOM_STEP);
+    else if(ev.key==='-' || ev.key==='_') zoomBy(ZOOM_STEP);
+    else setNow(NOW + (ev.key==='ArrowRight' ? 1 : -1));
+  });
+
+  /* On the document, not the plot: a drag that leaves the figure should keep
+     panning until the button comes up, wherever that happens. */
+  document.addEventListener('mousemove', panMove);
+  document.addEventListener('mouseup', panEnd);
+
+  document.getElementById('zoomin').onclick  = ()=> zoomBy(1/ZOOM_STEP);
+  document.getElementById('zoomout').onclick = ()=> zoomBy(ZOOM_STEP);
+  document.getElementById('zoomfit').onclick = zoomFit;
+  syncZoomUi();
+
   META = await (await fetch('data/index.json')).json();
   const ps = document.getElementById('preset');
   Object.entries(META.prevalence_presets).forEach(([k,v])=>{
@@ -277,11 +563,22 @@ function currentList(){
   else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
   return L;
 }
+/* The odds ratio the list shows has to be the same number the headline shows
+   for the record you then open, so it goes through the same anchor -- which
+   moves with the prevalence slider. Cheap enough to recompute (one bisection
+   over ~36 records), and it keeps a single definition of "odds ratio". */
+function currentAnchor(){
+  if(!META) return 0;
+  const prev = +document.getElementById('prev').value;
+  return anchorOffset(META.records.map(r=>Math.log(r.last)), prev) - logit(prev/100);
+}
+
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
   document.getElementById('pickcap').textContent =
     `${L.length} record${L.length===1?'':'s'} — click a line`;
   box.innerHTML='';
+  const a = Math.exp(currentAnchor());
   L.forEach(r=>{
     const d=document.createElement('div');
     d.className='row'; d.dataset.id=r.id;
@@ -289,12 +586,32 @@ function fillPicker(){
     const bits = [];
     if(r.ph!=null) bits.push(`pH ${r.ph.toFixed(2)}`);
     if(r.dur!=null) bits.push(`${r.dur}m`);
+    const or = r.last * a;
+    const oc = or>1 ? UP : DOWN;
     d.innerHTML = `<span class="dot" style="background:${col}"></span>`
                 + `<span class="rid">${r.id}</span>`
+                + `<span class="or" title="odds ratio at delivery" `
+                + `style="background:${oc}1f;color:${oc}">${fmtx(or)}</span>`
                 + `<span class="meta">${bits.join(' · ')}</span>`;
     d.onclick=()=>load(r.id); box.appendChild(d);
   });
   if(REC) mark(REC.record_id);
+}
+
+/* Moving the prevalence slider moves every odds ratio, so the list has to
+   follow. Rewriting the text in place rather than rebuilding the rows keeps
+   the scroll position and the selection where the user left them. */
+function refreshPickerOr(anchor){
+  const a = Math.exp(anchor==null ? currentAnchor() : anchor);
+  const by = {}; (META.records||[]).forEach(r=>{ by[r.id]=r; });
+  document.querySelectorAll('#picker .row').forEach(d=>{
+    const r = by[+d.dataset.id], el = d.querySelector('.or');
+    if(!r || !el) return;
+    const or = r.last * a, oc = or>1 ? UP : DOWN;
+    el.textContent = fmtx(or);
+    el.style.background = oc+'1f';
+    el.style.color = oc;
+  });
 }
 function mark(id){
   document.querySelectorAll('#picker .row').forEach(d=>{
@@ -308,7 +625,144 @@ async function load(id){
   REC = await (await fetch(`data/rec_${id}.json`)).json();
   LOGOR = REC.log_or;
   NOW = LOGOR.length-1;      // opens at delivery; click the curve to move it
+  ZX  = null;                // a new record starts fully zoomed out
+  const sc = document.getElementById('cursor');
+  sc.max = String(LOGOR.length-1);
+  sc.value = String(NOW);
   mark(id); redraw();
+}
+
+/* Zooming the time axis. Anchored on the cursor rather than on the middle of
+   the view: the minute you are reading is the thing you want to keep in
+   frame, and centring on the view instead walks it off the edge after two or
+   three steps. */
+const ZOOM_STEP = 1.4;
+const MIN_SPAN_MIN = 0.5;   /* a 4 Hz strip has nothing finer to say */
+
+/* The one place a candidate view is made legal: never wider than the
+   recording, never narrower than half a minute, and never hanging off either
+   end into empty space. The buttons, the keys and the wheel all come through
+   here, so none of them can reach a view the others cannot. */
+function clampX(lo, hi){
+  const full = FIT[1]-FIT[0];
+  let span = Math.min(Math.max(hi-lo, MIN_SPAN_MIN), full);
+  if(span >= full-1e-9) return null;          // fitted; not a zoom at all
+  if(lo < FIT[0]) lo = FIT[0];
+  if(lo + span > FIT[1]) lo = FIT[1] - span;
+  return [lo, lo+span];
+}
+
+/* The view the figure is currently showing. */
+function viewX(){ return ZX ? ZX.slice() : FIT.slice(); }
+
+/* The single write path. A candidate range is clamped BEFORE it reaches
+   Plotly, so nothing out of bounds is ever drawn and there is nothing to snap
+   back from -- at the ends of the recording a drag simply stops moving the
+   graph. Returns false when the clamp left the view where it already was. */
+function applyX(lo, hi){
+  const next = clampX(lo, hi), want = next || FIT, cur = viewX();
+  if(Math.abs(want[0]-cur[0])<1e-9 && Math.abs(want[1]-cur[1])<1e-9) return false;
+  ZX = next;
+  /* Never autorange back: autorange folds the cursor guides into the extent,
+     which is the bug that made the whole figure slide on every click. Fitting
+     means an explicit range covering the recording. */
+  Plotly.relayout('fig', {'xaxis.range': want.slice()});
+  syncZoomUi();
+  return true;
+}
+
+/* Zoom about a point. `at` defaults to the minute being read: centring on the
+   view instead walks it off the edge after two or three steps. */
+function zoomAt(f, at){
+  if(!REC) return;
+  const cur = viewX(), span0 = cur[1]-cur[0], span = span0*f;
+  if(span < MIN_SPAN_MIN && f < 1) return;
+  if(at==null) at = -REC.tbd_min[NOW];
+  at = Math.min(Math.max(at, cur[0]), cur[1]);
+  const frac = span0 ? (at-cur[0])/span0 : 0.5;
+  applyX(at - span*frac, at - span*frac + span);
+}
+function zoomBy(f){ zoomAt(f, null); }
+/* Unconditional, unlike applyX: a double-click reset has already autoranged
+   the plot behind our back, so "the view is already FIT" is not true even when
+   ZX says it is. */
+function zoomFit(){
+  ZX = null;
+  if(REC) Plotly.relayout('fig', {'xaxis.range': FIT.slice()});
+  syncZoomUi();
+}
+
+/* Where the plotting rectangle is right now, in client pixels. Read fresh
+   every time: a window resize moves it and Plotly does not tell us. */
+function figGeom(){
+  const gd = document.getElementById('fig');
+  const fl = gd && gd._fullLayout;
+  if(!fl || !fl._size || !fl.xaxis || fl.xaxis._offset==null) return null;
+  return {gd, sz:fl._size, xa:fl.xaxis, bb:gd.getBoundingClientRect()};
+}
+function inPlot(g, ev){
+  const px = ev.clientX-g.bb.left, py = ev.clientY-g.bb.top;
+  if(px < g.sz.l || px > g.sz.l+g.sz.w || py < g.sz.t || py > g.sz.t+g.sz.h)
+    return null;
+  return px;
+}
+
+/* Panning is done here rather than handed to Plotly. Plotly pans first and
+   corrects afterwards, which shows as the graph sliding past the end of the
+   recording and then jumping back into place. */
+let PAN = null;
+/* Outlives PAN on purpose: click fires after mouseup, and it is what tells a
+   pan apart from a click on the curve. */
+let PANNED = false;
+function panStart(ev){
+  const g = figGeom();
+  if(!g || inPlot(g, ev)==null) return;
+  const v = viewX();
+  PAN = {x0:ev.clientX, lo:v[0], hi:v[1], len:g.xa._length};
+  PANNED = false;
+  document.body.classList.add('panning');
+  ev.preventDefault();                       // no text selection mid-drag
+}
+function panMove(ev){
+  if(!PAN || !PAN.len) return;
+  if(Math.abs(ev.clientX - PAN.x0) > 3) PANNED = true;
+  const d = -(ev.clientX - PAN.x0) * (PAN.hi-PAN.lo) / PAN.len;
+  applyX(PAN.lo + d, PAN.hi + d);
+}
+function panEnd(){ PAN = null; document.body.classList.remove('panning'); }
+
+/* Wheel zoom, anchored under the pointer rather than on the cursor: the point
+   you are pointing at is the point you mean to magnify. Scaled by the actual
+   delta so a trackpad reads as a smooth zoom and a notched wheel as a step. */
+function wheelZoom(ev){
+  const g = figGeom();
+  if(!g) return;
+  const px = inPlot(g, ev);
+  if(px==null) return;
+  ev.preventDefault();                       // the page must not scroll instead
+  const f = Math.exp(Math.max(-0.35, Math.min(0.35, ev.deltaY * 0.0022)));
+  zoomAt(f, g.xa.p2d(px - g.xa._offset));
+}
+/* Greyed out at the stops, so the buttons say whether there is anywhere left
+   to go instead of silently doing nothing. */
+function syncZoomUi(){
+  const out = document.getElementById('zoomout');
+  const inb = document.getElementById('zoomin');
+  const fit = document.getElementById('zoomfit');
+  if(!out) return;
+  out.disabled = fit.disabled = !ZX;
+  inb.disabled = !!ZX && (ZX[1]-ZX[0]) <= MIN_SPAN_MIN + 1e-9;
+}
+
+/* Moving the cursor. Everything that changes NOW goes through here so the
+   slider, the arrows and a click on the curve cannot disagree about where the
+   red dot is. */
+function setNow(i){
+  const n = Math.max(0, Math.min(LOGOR.length-1, Math.round(i)));
+  if(n===NOW) return;
+  NOW = n;
+  document.getElementById('cursor').value = String(NOW);
+  redraw();
 }
 
 function redraw(){
@@ -324,7 +778,6 @@ function redraw(){
 
   const s = LOGOR.map(v=>v+anchor);
   const orNow = Math.exp(s[NOW]);
-  const risk  = 1/(1+Math.exp(-(LOGOR[NOW]+BASE_LO)));
   const tbd   = REC.tbd_min[NOW];
   const atNow = NOW===LOGOR.length-1 ? 'at delivery'
               : `at minute ${REC.t_min[NOW]} (−${tbd.toFixed(0)} min)`;
@@ -334,14 +787,13 @@ function redraw(){
     `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
     (REC.hypoxia? 'Acidaemic — cord pH &lt; 7.20' : 'Not acidaemic — cord pH ≥ 7.20') +
     '</span>';
-  document.getElementById('headline').innerHTML =
-    `<b>${fmtx(orNow)}</b> ${atNow} — absolute risk <b>${(100*risk).toFixed(1)}%</b> ` +
-    `against a ${prev.toFixed(2)}% baseline. Only the multiplier comes from the ` +
-    `CTG. Click anywhere on the risk curve to read another minute.`;
-
+  document.getElementById('scrublab').textContent =
+    `${fmtx(orNow)} ${atNow}`;
+  refreshPickerOr(anchor);
   drawMeta();
   drawBar(anchor, orNow, atNow);
   drawFig(s);
+  drawWinPills();
   drawTable();
 }
 
@@ -354,18 +806,30 @@ function drawMeta(){
   const M = REC.meta;
   if(!M){ box.innerHTML=''; return; }
   const C = (META && META.meta_colors) || {};
-  let h = '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:stretch">';
+  /* Equal-width tiles that together fill the measure. Sized to their contents
+     the row stopped wherever the last group happened to end, which read as the
+     metadata being a different width from everything below it.
+
+     Columns rather than a grid: five groups over four tracks leaves a grid with
+     one orphan tile on a second row, a quarter as wide as everything else and
+     the most conspicuous odd width on the page. Columns stack the spare tile
+     under a short one instead, and the block still ends on the measure. */
+  let h = '<div style="columns:265px 4;column-gap:12px">';
   Object.entries(M).forEach(([group, items])=>{
     const col = C[group] || '#8b8b8b';
-    h += `<div style="flex:0 1 auto;background:${col};color:#fff;border-radius:12px;`
-       + `padding:12px 16px 16px">`
+    h += `<div style="break-inside:avoid;margin:0 0 12px;background:${col};`
+       + `color:#fff;border-radius:12px;padding:12px 16px 16px">`
        + `<div style="font-weight:800;font-size:17px;margin-bottom:8px">${group}</div>`
-       + `<div style="display:grid;grid-template-columns:max-content max-content;`
+       /* Both tracks may shrink. Left the value track at auto it took the whole
+          tile for a long value like the second-stage note, crushed the label to
+          nothing and printed itself over the top of it. */
+       + `<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto);`
        + `column-gap:18px;row-gap:2px;font-size:14px;line-height:1.7">`;
     items.forEach(([label, value, note])=>{
       const t = note ? ` title="${String(note).replace(/"/g,'&quot;')}"` : '';
-      h += `<span style="opacity:.9"${t}>${label}</span>`
-         + `<span style="font-weight:700;white-space:nowrap"${t}>${value}</span>`;
+      h += `<span style="opacity:.9;min-width:0"${t}>${label}</span>`
+         + `<span style="font-weight:700;text-align:right;min-width:0;`
+         + `overflow-wrap:anywhere"${t}>${value}</span>`;
     });
     h += '</div></div>';
   });
@@ -379,11 +843,38 @@ function segments(topk){
   const segs = keep.map(i=>({phi:phi[i], name:label(F[i]),
      sub:`${REC.X[NOW][i]} ${unit(F[i])} — ${pctLabel(cohortPct(REC.X[NOW][i], META.pctgrid[F[i]]))}`}));
   [[1,'raising'],[-1,'lowering']].forEach(([sg,w])=>{
-    const v = rest.filter(i=>Math.sign(phi[i])===sg).reduce((s,i)=>s+phi[i],0);
-    const n = rest.filter(i=>Math.sign(phi[i])===sg).length;
-    if(Math.abs(v)>1e-9) segs.push({phi:v, name:`${n} other factors, ${w}`, sub:'pooled'});
+    const mem = rest.filter(i=>Math.sign(phi[i])===sg)
+                    .sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
+    const v = mem.reduce((s,i)=>s+phi[i],0);
+    /* A pooled term has to be able to say WHAT it pooled, so the members ride
+       along with it -- biggest first, which is the order anyone asking "what is
+       in there" wants to read. */
+    if(Math.abs(v)>1e-9) segs.push({phi:v, name:`${mem.length} other factors, ${w}`,
+      sub:'pooled', members:mem.map(i=>({name:label(F[i]), phi:phi[i]}))});
   });
   return segs;
+}
+
+/* What a pooled term contains, as tip markup and as plain hover lines. Capped
+   at ten: past that the list stops being readable and the tail is all factors
+   of 1.00 anyway. */
+const POOL_MAX = 10;
+function poolRows(seg){
+  return seg.members.slice(0, POOL_MAX)
+    .map(m=>[m.name, '×'+Math.exp(m.phi).toFixed(3)]);
+}
+function poolTipHTML(seg){
+  const rows = poolRows(seg).map(([n,x])=>
+    `<div style="display:flex;gap:14px;justify-content:space-between">`
+    + `<span>${esc(n)}</span><span class="u">${x}</span></div>`).join('');
+  const more = seg.members.length > POOL_MAX
+    ? `<div class="u">+${seg.members.length - POOL_MAX} more</div>` : '';
+  return `<b>${esc(seg.name)}</b><div style="margin-top:5px">${rows}${more}</div>`;
+}
+function poolHoverText(seg){
+  return poolRows(seg).map(([n,x])=>`${n}  ${x}`).join('<br>')
+    + (seg.members.length > POOL_MAX
+       ? `<br>+${seg.members.length - POOL_MAX} more` : '');
 }
 
 function drawBar(anchor, orNow, atNow){
@@ -398,10 +889,14 @@ function drawBar(anchor, orNow, atNow){
     const w=Math.abs(d.phi), up=d.phi>0;
     traces.push({type:'bar',orientation:'h',x:[w],y:[''],base:[cur],
       marker:{color:up?UP:DOWN,line:{color:'#fff',width:1.5}},showlegend:false,
-      hovertemplate:`<b>${d.name}</b><br>${d.sub}<br>×${Math.exp(d.phi).toFixed(3)}<extra></extra>`});
-    const room=Math.round(140*w/span);
+      hovertemplate:`<b>${d.name}</b><br>${d.sub}<br>×${Math.exp(d.phi).toFixed(3)}`
+        + (d.members ? `<br><br>${poolHoverText(d)}` : '') + `<extra></extra>`});
+    /* The character budget is in characters, so it has to come down as the
+       label type goes up -- 120 rather than 140 for 13px rather than 11px, or
+       a name that no longer fits gets set anyway and runs over the block. */
+    const room=Math.round(120*w/span);
     if(room>=6) ann.push({x:cur+w/2,y:0,text:d.name.length<=room?d.name:d.name.slice(0,room-1)+'…',
-      showarrow:false,font:{size:11,color:'#fff'}});
+      showarrow:false,font:{size:13,color:'#fff'}});
     cur+=w;
   });
   const loL = total - pos.reduce((s,d)=>s+d.phi,0), hiL = cur;
@@ -410,44 +905,59 @@ function drawBar(anchor, orNow, atNow){
   for(let k=-9;k<=9;k++){ const v=Math.log(Math.pow(2,k));
     if(v>=loL-pad && v<=hiL+pad){ ticks.push(v); tt.push(Math.pow(2,k)+'x'); } }
   ann.push({x:total,y:1.02,yref:'paper',text:`<b>${fmtx(orNow)}</b>`,showarrow:false,
-            xanchor:'center',yanchor:'bottom',font:{size:17,color:'#111'}});
+            xanchor:'center',yanchor:'bottom',font:{size:20,color:'#111'}});
   if(anchor>=loL-pad && anchor<=hiL+pad)
     ann.push({x:anchor,y:1.02,yref:'paper',text:'base value',showarrow:false,
-              xanchor:'center',yanchor:'bottom',font:{size:11,color:'#888'}});
-  ann.push({x:0,y:1.3,xref:'paper',yref:'paper',xanchor:'left',showarrow:false,
-            text:`<span style="color:${UP}"><b>pushes risk higher ▶</b></span>`,font:{size:13}});
-  ann.push({x:1,y:1.3,xref:'paper',yref:'paper',xanchor:'right',showarrow:false,
-            text:`<span style="color:${DOWN}"><b>◀ pushes risk lower</b></span>`,font:{size:13}});
+              xanchor:'center',yanchor:'bottom',font:{size:13,color:'#888'}});
+  ann.push({x:0,y:1.34,xref:'paper',yref:'paper',xanchor:'left',showarrow:false,
+            text:`<span style="color:${UP}"><b>pushes risk higher ▶</b></span>`,font:{size:15}});
+  ann.push({x:1,y:1.34,xref:'paper',yref:'paper',xanchor:'right',showarrow:false,
+            text:`<span style="color:${DOWN}"><b>◀ pushes risk lower</b></span>`,font:{size:15}});
   Plotly.react('bar', traces, {
-    height:200,bargap:.55,barmode:'overlay',annotations:ann,font:{family:PLOT_FONT},
-    margin:{l:12,r:12,t:60,b:38},plot_bgcolor:'#fff',paper_bgcolor:'#fff',
+    /* Taller by the amount the type grew, so the bigger labels above the bar
+       have the same air around them as the small ones did. */
+    height:224,bargap:.55,barmode:'overlay',annotations:ann,font:{family:PLOT_FONT},
+    /* Same left and right margins as the trajectory figure below, so the two
+       plotting areas -- not just the two divs -- line up edge to edge. */
+    margin:{l:56,r:14,t:60,b:38},plot_bgcolor:'#fff',paper_bgcolor:'#fff',
+    /* FIXED. Unlike the trajectory, this chart is not a recording to explore:
+       it is one bar whose whole point is that the blocks are read against each
+       other and against the axis they are already framed to. Zooming or panning
+       it can only cut blocks off the ends and put the total out of view. */
+    dragmode:false,
     xaxis:{range:[loL-pad,hiL+pad],tickvals:ticks,ticktext:tt,showgrid:false,zeroline:false,
-           ticks:'outside',showline:true,linecolor:'#333',tickfont:{size:12},
-           title:{text:'odds versus a typical birth (log scale)',font:{size:12.5}}},
-    yaxis:{showticklabels:false,showgrid:false,zeroline:false}}, {displayModeBar:false});
-  document.getElementById('barcap').innerHTML =
-    `Each block’s width is that feature’s impact. Red blocks stack from the ` +
-    `base value up to <b>${fmtx(orNow)}</b>; blue ones carry on past it, so the ` +
-    `boundary between the colours is the odds ratio.`;
+           fixedrange:true,
+           ticks:'outside',showline:true,linecolor:'#333',tickfont:{size:13.5},
+           title:{text:'odds versus a typical birth (log scale)',font:{size:14}}},
+    yaxis:{showticklabels:false,showgrid:false,zeroline:false,fixedrange:true}},
+    {displayModeBar:false, scrollZoom:false, doubleClick:false, responsive:true});
   drawChips(segs, anchor, orNow, atNow);
 }
 
 function drawChips(segs, anchor, orNow, atNow){
   const box=document.getElementById('chips'); box.innerHTML='';
-  const add=(mult,name,sub,cls)=>{
+  const add=(mult,name,sub,cls,seg)=>{
     const d=document.createElement('div'); d.className='chipbox';
     d.innerHTML=`<span class="chip ${cls}">${mult.toFixed(2)}</span><small><b>${name}</b><br>${sub}</small>`;
+    /* A pooled chip carries its contents so the hover can name them. Set as a
+       property rather than an attribute, so the markup needs no re-escaping. */
+    if(seg && seg.members) d.dataset.pool = poolTipHTML(seg);
     box.appendChild(d);
-    const x=document.createElement('div'); x.style.cssText='color:#9e9e9e;font-size:22px'; x.textContent='×';
+    const x=document.createElement('div'); x.className='sep'; x.textContent='×';
     box.appendChild(x);
   };
-  if(Math.abs(anchor)>1e-9) add(Math.exp(anchor),'Base value','typical birth in this population','dn');
+  /* The base value is deliberately NOT a chip. It is the reference the whole
+     row is measured against, not one term among the features, and reading it
+     as a factor invited the question of why a "typical birth" multiplies
+     anything. The row therefore shows the feature terms only, and the product
+     of what is displayed falls short of the total by exactly that anchor. */
   segs.slice().sort((a,b)=>Math.abs(a.phi)-Math.abs(b.phi))
-      .forEach(s=>add(Math.exp(s.phi), s.name, s.sub, s.phi>0?'':'dn'));
+      .forEach(s=>add(Math.exp(s.phi), s.name, s.sub, s.phi>0?'':'dn', s));
   box.lastChild.textContent='=';
   const d=document.createElement('div'); d.className='chipbox';
   d.innerHTML=`<span class="chip tot">${orNow.toFixed(2)}</span><small><b>Odds ratio ${atNow}</b><br>for cord pH &lt; 7.20</small>`;
   box.appendChild(d);
+  bindTips(box, '[data-pool]', (tip, el)=>{ tip.innerHTML = el.dataset.pool; });
 }
 
 function bandStack(P, base){
@@ -479,12 +989,38 @@ function drawFig(s){
   /* The WHOLE curve is drawn, always. Truncating it at the cursor made every
      click look like the chart was collapsing; the cursor marks a moment, it
      does not decide how much of the recording exists. */
+  /* A group does not raise or lower risk for the whole recording -- it changes
+     sign along it -- so its band cannot simply be drawn one way or the other.
+     Each group is drawn twice over the same outline: once plain, once hatched,
+     each polygon pinched to zero thickness wherever the other one applies. The
+     hatch, not the colour, carries the direction: the family colour has to mean
+     the same thing above and below the line or the legend stops meaning
+     anything. */
+  /* bgcolor has to be named. A fillpattern does not inherit the trace's
+     fillcolor for its background -- left out, the band renders as bare
+     diagonal strokes on nothing, which is invisible against the paper on
+     exactly the records where the lowering stack is largest. */
+  const hatch = c => ({shape:'/', size:8, solidity:.42,
+                       bgcolor:c, fgcolor:'#ffffff'});
   G.forEach((g,j)=>{
-    traces.push({x:x.concat(x.slice().reverse()),
-      y:st.lo.map(r=>r[j]).concat(st.hi.map(r=>r[j]).reverse()),
-      fill:'toself',fillcolor:FAM[g]||FAM.Other,line:{width:0},opacity:.85,
-      name:g,hoverinfo:'skip',type:'scatter',mode:'lines',xaxis:'x',yaxis:'y'});
+    const c = FAM[g]||FAM.Other;
+    const lo = st.lo.map(r=>r[j]), hi = st.hi.map(r=>r[j]);
+    const band = (keep, extra) => Object.assign({
+      x:x.concat(x.slice().reverse()),
+      y:lo.concat(hi.map((v,t)=> keep(P[j][t]) ? v : lo[t]).reverse()),
+      fill:'toself',fillcolor:c,line:{width:0},opacity:.85,
+      name:g,hoverinfo:'skip',type:'scatter',mode:'lines',xaxis:'x',yaxis:'y'},
+      extra);
+    traces.push(band(v=>v>0, {}));
+    traces.push(band(v=>v<0, {showlegend:false, fillpattern:hatch(c)}));
   });
+  /* Zero-area, so it shows up in the legend and nowhere else: the hatch has to
+     be told to the reader, not left to be inferred from the band above the
+     curve. */
+  traces.push({x:[x[0]],y:[st.s[0]],fill:'toself',fillcolor:'#b3b1a8',
+    fillpattern:hatch('#b3b1a8'),line:{width:0},opacity:.85,mode:'lines',
+    type:'scatter',name:'Hatched: lowers risk',hoverinfo:'skip',
+    xaxis:'x',yaxis:'y'});
   traces.push({x:x,y:st.s,mode:'lines',line:{color:'#fff',width:6.5},
                showlegend:false,hoverinfo:'skip',xaxis:'x',yaxis:'y',type:'scatter'});
   traces.push({x:x,y:st.s,mode:'lines',name:'Odds ratio',
@@ -498,92 +1034,242 @@ function drawFig(s){
 
   const rows = REC.strip ? 3 : 1;
   const shapes=[];
+  let ucRange=null;
   if(REC.strip){
+    /* The UC panel's y range is pinned rather than autoranged so a contraction
+       band can be drawn in data coordinates and still fill the panel exactly. */
+    const ucv = REC.strip.uc.filter(v=>v!=null);
+    ucRange = [Math.min(0, ...ucv), (ucv.length?Math.max(...ucv):100)*1.04];
+
+    /* Every detected event is a filled band drawn as a TRACE, not a shape.
+       Shapes cannot carry hover, and the whole span has to answer to the
+       cursor -- reading a tracing means pointing at the event, not hunting for
+       the marker that labels it. hoveron:'fills' is what makes the interior of
+       the band the hover target. Bands go in before the signals so the FHR and
+       UC lines draw on top of them. */
+    (REC.events||[]).forEach(e=>{
+      const uc = e.d==='contraction', col = EVC[e.d]||'#bbb';
+      const [y0,y1] = uc ? ucRange : (BAND_Y[e.d] || FHR_RANGE);
+      traces.push({
+        x:[e.a,e.a,e.b,e.b,e.a], y:[y0,y1,y1,y0,y0],
+        type:'scatter', mode:'lines', fill:'toself',
+        fillcolor:rgba(col, uc?.20:.26), line:{width:0},
+        hoveron:'fills', hoverinfo:'text', text:evLabel(e),
+        name:ELAB[e.d]||e.d, legendgroup:e.d, showlegend:false,
+        hoverlabel:{bgcolor:'#fff',bordercolor:col,font:{color:'#111'}},
+        xaxis:uc?'x3':'x2', yaxis:uc?'y3':'y2'});
+    });
+
     traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:'#ff2d6f',width:1},
                  name:'FHR',type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:false,
-                 hovertemplate:'%{y:.0f} bpm<extra></extra>'});
+                 hoverinfo:'skip'});
     if(REC.strip.base)
+      /* Not just 'Baseline': the legend already carries a Baseline entry for
+         the feature family. Drawn in that family's blue and heavy enough to
+         read against the FHR trace -- it is the reference every event on this
+         panel was measured from, so it should not be the faintest line on it. */
       traces.push({x:REC.strip.x,y:REC.strip.base,mode:'lines',
-        line:{color:'#111',width:1.4,dash:'dash'},name:'baseline (causal)',
-        type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,hoverinfo:'skip'});
+        line:{color:FAM['Baseline'],width:2.4,dash:'dash'},name:'FHR baseline',
+        type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,
+        hovertemplate:'baseline %{y:.0f} bpm<extra></extra>'});
     traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:'#2f7fd0',width:1},
                  name:'UC',type:'scatter',xaxis:'x3',yaxis:'y3',showlegend:false,
-                 hovertemplate:'%{y:.0f}<extra></extra>'});
+                 hoverinfo:'skip'});
 
-    /* Events, shaded where they happened and coloured by TYPE. Contractions
-       are drawn on the UC panel where they were measured and faintly on the
-       FHR panel so a deceleration can be read against the contraction that
-       may have caused it. */
-    (REC.events||[]).forEach(e=>{
-      const col = EVC[e.d] || '#bbb';
-      if(e.k==='contraction'){
-        shapes.push({type:'rect',xref:'x3',yref:'y3 domain',x0:e.a,x1:e.b,y0:0,y1:1,
-                     fillcolor:col,opacity:.22,line:{width:0},layer:'below'});
-        shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
-                     fillcolor:col,opacity:.08,line:{width:0},layer:'below'});
-      } else {
-        shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
-                     fillcolor:col,opacity:.26,line:{width:0},layer:'below'});
-      }
-    });
-
-    /* Shapes cannot carry hover, so each event also gets a marker that can.
-       Grouped by type so the legend doubles as the key. */
+    /* One marker trace per type, purely so the legend has an entry to key off
+       and toggle by. Drawn in the fixed EVORDER so the legend does not
+       reshuffle from record to record. Accelerations sit at the top of the FHR
+       panel and point up, decelerations at the foot and point down -- the
+       direction of the excursion they mark -- and contractions at the foot of
+       the UC panel where they were measured. Tachycardia and bradycardia get a
+       square in the middle of their own zone: they are not an excursion in
+       either direction, so an arrow would say the wrong thing. */
     const byType = {};
     (REC.events||[]).forEach(e=>{ (byType[e.d] = byType[e.d] || []).push(e); });
-    Object.entries(byType).forEach(([t,evs])=>{
-      const uc = t==='contraction';
+    EVORDER.filter(t=>byType[t]).forEach(t=>{
+      const evs = byType[t], acc = t==='acceleration', uc = t==='contraction';
+      const zone = BAND_Y[t];
       traces.push({
         x:evs.map(e=>(e.a+e.b)/2),
-        y:evs.map(()=> uc ? 0 : 200),
-        mode:'markers', type:'scatter', name:t,
-        xaxis: uc?'x3':'x2', yaxis: uc?'y3':'y2',
-        marker:{size:9,symbol:uc?'triangle-up':'triangle-down',
+        y:evs.map(()=> uc ? ucRange[0]
+                          : zone ? (zone[0]+zone[1])/2
+                          : (acc ? FHR_RANGE[1]-8 : FHR_RANGE[0]+8)),
+        mode:'markers', type:'scatter', name:ELAB[t]||t, legendgroup:t,
+        xaxis:uc?'x3':'x2', yaxis:uc?'y3':'y2',
+        marker:{size:9,symbol:zone?'square':((acc||uc)?'triangle-up':'triangle-down'),
                 color:EVC[t]||'#bbb',line:{color:'#fff',width:1}},
-        customdata:evs.map(e=>[t,(e.b-e.a)*60,-e.b,-e.a,ETIO[t]||'']),
-        hovertemplate:'<b>%{customdata[0]}</b><br>'+
-          '%{customdata[2]:.1f} → %{customdata[3]:.1f} min before delivery<br>'+
-          '%{customdata[1]:.0f} s<br><i>%{customdata[4]}</i><extra></extra>'});
+        text:evs.map(evLabel), hoverinfo:'text',
+        hoverlabel:{bgcolor:'#fff',bordercolor:EVC[t]||'#bbb',
+                    font:{color:'#111'}}});
     });
+
+    /* THE EVIDENCE, NOT JUST THE VERDICT. Early / late / variable is not a
+       property of the deceleration on its own: it is where the nadir falls
+       against ONE contraction's peak. A tie from the nadir down to that peak
+       says which contraction was used, and its lean says how late -- the
+       horizontal offset IS the nadir lag the rule tested. Drawn as shapes with
+       a data x and a paper y, because the two ends live in different panels
+       and only paper coordinates span the gap between them. */
+    const near = xv => {
+      const sx = REC.strip.x; let best=0, bd=Infinity;
+      for(let i=0;i<sx.length;i++){ const d=Math.abs(sx[i]-xv);
+        if(d<bd){ bd=d; best=i; } }
+      return best;
+    };
+    const paperY = (dom, rng, v) =>
+      dom[0] + (Math.max(rng[0], Math.min(rng[1], v)) - rng[0])
+               / (rng[1]-rng[0]) * (dom[1]-dom[0]);
+    let nLinks = 0;
+    (REC.links||[]).forEach(L=>{
+      const fv = REC.strip.fhr[near(L.a)], uv = REC.strip.uc[near(L.b)];
+      if(fv==null || uv==null) return;
+      nLinks++;
+      shapes.push({type:'line', xref:'x2', yref:'paper',
+        x0:L.a, y0:paperY(FHR_DOM, FHR_RANGE, fv),
+        x1:L.b, y1:paperY(UC_DOM, ucRange, uv),
+        line:{color:EVC[L.d]||EVC.other, width:1.2, dash:'dot'}, layer:'below'});
+    });
+    if(nLinks)
+      /* Shapes carry no legend, so the tie needs a trace of its own to be
+         named. No points, so it draws nothing but its key. */
+      traces.push({x:[null],y:[null],mode:'lines',type:'scatter',
+        xaxis:'x2',yaxis:'y2',name:'Decel → its contraction',
+        line:{color:'#8a8880',width:1.2,dash:'dot'},hoverinfo:'skip'});
   }
 
-  [[30,'dash'],[60,'dot']].forEach(([d,dash])=>{
+  /* The cursor and its −30/−60 min guides are shapes in data coordinates, and
+     Plotly folds shapes into the autorange. Left to itself the axis therefore
+     grew every time the cursor moved back far enough for x[NOW]-60 to fall off
+     the start of the record, and the whole figure appeared to slide. Pinning
+     the range to the recording (or to whatever the user has zoomed to) keeps
+     the click a cursor move and nothing else. Computed before the guides so
+     they can be labelled only where a label would actually be on screen. */
+  let xs = x.slice();
+  if(REC.strip) xs = xs.concat(REC.strip.x);
+  const xlo = Math.min(...xs), xhi = Math.max(...xs);
+  const pad = Math.max((xhi-xlo)*0.01, 0.5);
+  /* The full extent of the record, kept so the zoom controls have something to
+     clamp against and something to reset to. */
+  FIT = [xlo-pad, xhi+pad];
+  /* A zoom held from before this redraw is re-clamped, not trusted: the record
+     may have changed length under it. */
+  ZX = ZX ? clampX(ZX[0], ZX[1]) : null;
+  const xrange = ZX ? ZX.slice() : FIT.slice();
+  const onScreen = v => v>=xrange[0] && v<=xrange[1];
+  const yrefOf = r => r===1?'y domain':(r===2?'y2 domain':'y3 domain');
+  const xrefOf = r => r===1?'x':(r===2?'x2':'x3');
+
+  /* Three near-black vertical lines with nothing to tell them apart read as
+     chart furniture. They are not: the dashed and dotted ones are the far edge
+     of the 30- and 60-minute lookbacks that every win_/lwin_ feature in the
+     table is measured over, so they are named on the plot. */
+  const figAnn = [];
+  [[30,'dash',15],[60,'dot',45]].forEach(([d,dash,mid])=>{
     for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW]-d,x1:x[NOW]-d,
-      yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
-      xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#151515',width:1.2,dash:dash}});
+      yref:yrefOf(r),y0:0,y1:1,
+      xref:xrefOf(r),line:{color:GUIDE,width:1.2,dash:dash}});
+    /* Centred in the stretch it names. The 60 label sits in the part of the
+       long window the short one does not cover, so the two never collide. */
+    if(onScreen(x[NOW]-mid))
+      figAnn.push({x:x[NOW]-mid, xref:'x', yref:'y domain', y:1, yanchor:'top',
+        yshift:-3, xanchor:'center', text:`◀ last ${d} min ▶`, showarrow:false,
+        font:{size:11,color:GUIDE}, bgcolor:'rgba(255,255,255,.78)'});
   });
   for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW],x1:x[NOW],
-    yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
-    xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#111',width:1.6}});
+    yref:yrefOf(r),y0:0,y1:1,
+    xref:xrefOf(r),line:{color:'#111',width:1.6}});
+
+  /* Onset of the second stage of labour, from the record's own header. It is
+     fixed to the recording, not to the cursor, so it is the one vertical line
+     here that does not move when you scrub. Drawn only when it falls inside
+     the trace: in 39 of 512 records the pushing stage had already begun before
+     the recording starts, and a line pinned to the left edge would claim it
+     began exactly there. */
+  const II = REC.ii_start;
+  if(II!=null && onScreen(II)){
+    for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:II,x1:II,
+      yref:yrefOf(r),y0:0,y1:1,
+      xref:xrefOf(r),line:{color:SECOND,width:1.8}});
+    /* At the foot of the odds panel, where the window labels are not. */
+    figAnn.push({x:II, xref:'x', yref:'y domain', y:0, yanchor:'bottom',
+      yshift:3, xshift:4, xanchor:'left', text:'Second stage ▶', showarrow:false,
+      font:{size:11,color:SECOND}, bgcolor:'rgba(255,255,255,.82)'});
+  }
 
   const lay = {
     height: rows===3?680:380, margin:{l:56,r:14,t:44,b:40},
     font:{size:14,family:PLOT_FONT}, hovermode:'closest', shapes:shapes,
+    annotations:figAnn,
+    /* Plotly's own dragging is off entirely: its box zoom fired on every
+       slightly-shaky click, and its pan moves the axis first and clamps it
+       afterwards, which reads as the graph sliding past the end of the
+       recording and snapping back. Press-drag and wheel are handled by
+       panStart/panMove and wheelZoom instead, which clamp before drawing. */
+    dragmode:false,
     legend:{orientation:'h',y:1.02,yanchor:'bottom',x:0,font:{size:12}},
     plot_bgcolor:'#fff', paper_bgcolor:'#fff',
+    /* minallowed/maxallowed are a second line of defence. clampX is the first
+       and does all the work; these stop anything Plotly initiates on its own,
+       such as a double-click reset, from leaving the recording. */
     xaxis :{domain:[0,1], anchor:'y', showgrid:true, gridcolor:'#eee',
+            range:xrange, autorange:false,
+            minallowed:FIT[0], maxallowed:FIT[1],
             title:{text: rows===3?'':'minutes before delivery'}},
     yaxis :{domain: rows===3?[0.52,1]:[0,1], anchor:'x', title:{text:'odds / typical'},
-            showgrid:true, gridcolor:'#eee',
+            showgrid:true, gridcolor:'#eee', fixedrange:true,
             tickvals:[-2.079,-1.386,-0.693,0,0.693,1.386,2.079],
             ticktext:['0.125','0.25','0.5','1','2','4','8']}
   };
   if(rows===3){
-    lay.xaxis2={domain:[0,1],anchor:'y2',matches:'x',showgrid:true,gridcolor:'#eee',showticklabels:false};
-    lay.yaxis2={domain:[0.24,0.48],anchor:'x2',title:{text:'FHR (bpm)'},range:[50,210],
+    lay.xaxis2={domain:[0,1],anchor:'y2',matches:'x',showgrid:true,gridcolor:'#eee',
+                minallowed:FIT[0],maxallowed:FIT[1],showticklabels:false};
+    lay.yaxis2={domain:FHR_DOM.slice(),anchor:'x2',title:{text:'FHR (bpm)'},
+                range:FHR_RANGE.slice(),autorange:false,fixedrange:true,
                 showgrid:true,gridcolor:'#eee'};
     lay.xaxis3={domain:[0,1],anchor:'y3',matches:'x',showgrid:true,gridcolor:'#eee',
+                minallowed:FIT[0],maxallowed:FIT[1],
                 title:{text:'minutes before delivery'}};
-    lay.yaxis3={domain:[0,0.20],anchor:'x3',title:{text:'UC'},showgrid:true,gridcolor:'#eee'};
+    lay.yaxis3={domain:UC_DOM.slice(),anchor:'x3',title:{text:'UC'},showgrid:true,
+                gridcolor:'#eee',range:ucRange,autorange:!ucRange,fixedrange:true};
   }
-  Plotly.react('fig', traces, lay, {displayModeBar:false, scrollZoom:false});
+  /* scrollZoom off for the same reason dragmode is: wheelZoom does it, and it
+     clamps first. */
+  Plotly.react('fig', traces, lay,
+               {displayModeBar:false, scrollZoom:false, responsive:true});
   const gd=document.getElementById('fig');
+  /* plotly_click only fires when the pointer lands ON a trace point, so most
+     of the panel was dead: clicking between two minutes, or in the white space
+     above the curve, did nothing. This reads the pixel straight off the x
+     axis instead, so any click inside the plotting rectangle -- on any of the
+     three stacked panels, they share the axis -- moves the cursor to the
+     nearest minute. Property assignment, not addEventListener, so re-rendering
+     replaces the handler rather than stacking a new one on every redraw. */
   gd.removeAllListeners && gd.removeAllListeners('plotly_click');
-  gd.on('plotly_click', ev=>{
-    const px = ev.points[0].x;
+  gd.onmousedown = panStart;
+  gd.onwheel = wheelZoom;
+  gd.onclick = ev=>{
+    /* A drag is a pan, not a cursor move -- the click event fires on mouseup
+       either way, so the two have to be told apart by how far the pointer
+       travelled. */
+    if(PANNED) return;
+    const g = figGeom();
+    if(!g) return;
+    const px = inPlot(g, ev);
+    /* Outside the plotting rectangle is the legend, the axis titles and the
+       margins -- clicking those should not move anything. */
+    if(px==null) return;
+    const dx = g.xa.p2d(px - g.xa._offset);
     let best=0, bd=Infinity;
-    x.forEach((v,i)=>{ const d=Math.abs(v-px); if(d<bd){bd=d;best=i;} });
-    NOW=best; redraw();
+    x.forEach((v,i)=>{ const d=Math.abs(v-dx); if(d<bd){bd=d;best=i;} });
+    setNow(best);
+  };
+  /* Plotly no longer initiates any range change of its own, so the only thing
+     left to catch is a double-click reset -- which autoranges, and autorange
+     folds the cursor guides into the extent, the bug that made the whole
+     figure slide. */
+  gd.removeAllListeners && gd.removeAllListeners('plotly_relayout');
+  gd.on('plotly_relayout', ev=>{
+    if(ev['xaxis.autorange']===true) zoomFit();
   });
 }
 
@@ -595,7 +1281,10 @@ const TCOLS = [
   {key:'rank',  head:'#',              num:true},
   {key:'cat',   head:'Category',       num:false},
   {key:'feat',  head:'Feature',        num:false},
-  {key:'mean',  head:'What it measures', num:false, wrap:true},
+  /* Sorted by span, not alphabetically: "Last 30 min" before "Last 60 min"
+     before "Whole recording", which is the order a reader expects and is not
+     what localeCompare on the label gives. */
+  {key:'winr',  head:'Window',         num:true, left:true},
   {key:'val',   head:'Value',          num:true},
   {key:'pct',   head:'Cohort %ile',    num:true},
   {key:'med',   head:'Cohort median',  num:true},
@@ -603,18 +1292,40 @@ const TCOLS = [
   {key:'phi',   head:'log-odds φ',     num:true},
 ];
 
+/* How far back a feature looks, as text and as a number to sort/filter on.
+   The text is written by export_static_site.py from classify_timevarying's
+   feature_window(), so the spans shown here cannot drift from the spans the
+   feature table was actually built with. */
+function win(f){ return (META.windows && META.windows[f]) || 'Unspecified'; }
+/* Rank on the span itself: minutes for a trailing window, a large number for
+   the unbounded ones, so "Whole recording" always sorts last. */
+function winRank(w){
+  const m = /Last (\d+) min/.exec(w);
+  if(m && !/vs whole/.test(w)) return +m[1];
+  if(/vs whole/.test(w)) return 9000;
+  if(/Whole recording/.test(w)) return 9001;
+  if(/admission/i.test(w)) return 9002;
+  return 9999;
+}
+
+let TWIN = 'all';   /* which window the table is filtered to */
+
 function tableRows(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
-  const rows = phi.map((v,i)=>({
+  let rows = phi.map((v,i)=>({
     i, cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
-    mean: meaning(F[i]), val: X[i],
+    mean: meaning(F[i]), val: X[i], win: win(F[i]), winr: winRank(win(F[i])),
     pct: cohortPct(X[i], META.pctgrid[F[i]]),
     med: META.pctgrid[F[i]] ? META.pctgrid[F[i]][50] : null,
     mult: Math.exp(v), phi: v,
   }));
+  /* Ranked over ALL features, then filtered: a rank is a feature's standing in
+     the whole explanation, and renumbering 1..n inside a filtered view would
+     claim the top row of "Last 30 min" is the record's strongest driver. */
   rows.sort((a,b)=>Math.abs(b.phi)-Math.abs(a.phi));
   rows.forEach((r,k)=>r.rank=k+1);
-  const col = TCOLS.find(c=>c.key===TSORT.key) || TCOLS[8];
+  if(TWIN!=='all') rows = rows.filter(r=>r.win===TWIN);
+  const col = TCOLS.find(c=>c.key===TSORT.key) || TCOLS.find(c=>c.key==='phi');
   const dir = TSORT.dir;
   rows.sort((a,b)=>{
     let x=a[col.key], y=b[col.key];
@@ -635,31 +1346,114 @@ function sortTable(key){
   drawTable();
 }
 
+/* One pill per span the feature set actually contains, with its count, plus
+   All. Built from META rather than from the visible rows, so the choices do
+   not disappear as soon as you narrow to one of them. */
+function drawWinPills(){
+  const box = document.getElementById('winpills');
+  if(!box) return;
+  const n = {};
+  META.feat_cols.forEach(f=>{ const w=win(f); n[w]=(n[w]||0)+1; });
+  const spans = Object.keys(n).sort((a,b)=>winRank(a)-winRank(b));
+  box.innerHTML = [['all', 'All', META.feat_cols.length]]
+    .concat(spans.map(w=>[w, w, n[w]]))
+    .map(([k,lab,c])=>`<button class="pill${TWIN===k?' on':''}" data-w="${esc(k)}">`
+       + `${esc(lab)}<span class="n">${c}</span></button>`).join('');
+  box.querySelectorAll('.pill').forEach(b=>b.onclick=()=>{
+    TWIN = b.dataset.w; drawWinPills(); drawTable();
+  });
+}
+
+/* Attribute-safe escaping for the values that ride on data- attributes. It was
+   being called before it existed, which threw inside drawTable and left the
+   table empty. */
+function esc(s){
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 function drawTable(){
   const rows = tableRows();
   const head = TCOLS.map(c=>{
     const on = TSORT.key===c.key;
     const arrow = on ? (TSORT.dir>0 ? ' ▲' : ' ▼') : '';
-    return `<th class="${c.num?'num':''}${c.wrap?' wrap':''} sortable`
+    /* `num` decides how the column sorts; `left` overrides how it is aligned,
+       for the one column that sorts on a hidden numeric rank but shows text. */
+    return `<th class="${c.num&&!c.left?'num':''}${c.wrap?' wrap':''} sortable`
          + `${on?' on':''}" onclick="sortTable('${c.key}')">${c.head}${arrow}</th>`;
   }).join('');
   let h = `<table><tr>${head}</tr>`;
   rows.forEach(r=>{
     const c = FAM[r.cat]||FAM.Other;
-    h+=`<tr><td class="num">${r.rank}</td>`
+    h+=`<tr data-feat="${esc(r.feat)}" data-unit="${esc(r.unit||'')}"`
+     + ` data-win="${esc(r.win)}" data-mean="${esc(r.mean||'')}">`
+     + `<td class="num">${r.rank}</td>`
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
      + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
-     + `<td class="wrap" style="color:var(--mut)">${r.mean}</td>`
+     + `<td style="color:var(--mut)">${esc(r.win)}</td>`
      + `<td class="num">${r.val==null?'':r.val}</td>`
      + `<td class="num">${pctCell(r.pct)}</td>`
      + `<td class="num">${fmtNum(r.med)}</td>`
      + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
      + `<td class="num">${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
   });
-  document.getElementById('tbl').innerHTML = h+'</table>';
+  const box = document.getElementById('tbl');
+  box.innerHTML = h+'</table>';
+  bindTips(box, 'tr[data-feat]', (tip, el)=>fillTip(tip, el.dataset));
+}
+
+/* One tip element reused by every row, driven by delegation, so re-rendering
+   the table on each cursor move costs nothing extra. The native `title`
+   attribute would do the job but takes a second to appear and cannot be
+   styled, which reads as the app being slow rather than the browser. */
+/* Built as nodes with textContent rather than an HTML string, so a feature
+   description containing < or & cannot break out of the tip. */
+function fillTip(tip, d){
+  tip.textContent = '';
+  const b = document.createElement('b'); b.textContent = d.feat; tip.appendChild(b);
+  if(d.unit){
+    const u = document.createElement('span');
+    u.className='u'; u.textContent = ` (${d.unit})`; tip.appendChild(u);
+  }
+  if(d.win){
+    const w = document.createElement('span');
+    w.className='u'; w.textContent = ` · ${d.win}`; tip.appendChild(w);
+  }
+  if(d.mean){
+    tip.appendChild(document.createElement('br'));
+    tip.appendChild(document.createTextNode(d.mean));
+  }
+}
+
+/* Clamped to the viewport, and flipped above the cursor near the bottom, so a
+   tip on the last row is not half off the screen. */
+function placeTip(tip, ev){
+  const w = tip.offsetWidth, hgt = tip.offsetHeight, pad = 12;
+  let x = ev.clientX + 16, y = ev.clientY + 18;
+  if(x + w + pad > innerWidth)  x = ev.clientX - w - 16;
+  if(y + hgt + pad > innerHeight) y = ev.clientY - hgt - 14;
+  tip.style.left = Math.max(pad, x)+'px';
+  tip.style.top  = Math.max(pad, y)+'px';
+}
+/* One hover binding for both users of the page tip: the table rows, which fill
+   it from their data- attributes, and the pooled chips, which carry their own
+   markup ready-made. */
+function bindTips(box, sel, fill){
+  const tip = document.getElementById('tip');
+  let cur = null;
+  box.onmousemove = ev=>{
+    const el = ev.target.closest && ev.target.closest(sel);
+    if(!el){ if(cur){ cur=null; tip.classList.remove('on'); } return; }
+    if(el!==cur){ cur=el; fill(tip, el); tip.classList.add('on'); }
+    placeTip(tip, ev);
+  };
+  box.onmouseleave = ()=>{ cur=null; tip.classList.remove('on'); };
 }
 
 boot();
 </script>
+<!-- One tip for the whole page, moved and refilled on hover. -->
+<div id="tip" role="tooltip" aria-hidden="true"></div>
 </body>
 </html>
