@@ -203,7 +203,6 @@
      inside its own panel rather than pushing the page wider than everything
      else -- an overflowing table was the loudest of the mismatched widths. */
   .tablewrap{overflow-x:auto}
-  .foot{margin:18px 2px 0}
 </style>
 </head>
 <body>
@@ -216,7 +215,6 @@
     <select id="preset"></select>
     <label for="prev">Prevalence (%)</label>
     <input type="number" id="prev" min="0.01" max="90" step="0.1" value="18.1">
-    <p class="cap" id="basecap"></p>
 
     <h3>Recording</h3>
     <div id="pills">
@@ -287,16 +285,6 @@
       <div class="tablewrap"><div id="tbl"></div></div>
     </section>
 
-    <p class="cap foot">
-      Out-of-fold predictions under record-grouped cross-validation: no record was
-      ever scored by a model that saw it. The only label is cord pH at birth, so a
-      value here is “given what is known at this minute, this baby ends acidaemic
-      with probability p”. Discrimination falls from about 0.68 at delivery to near
-      chance an hour out — read early positions as explanation, not as warning.
-      Odds ratios are measured against a typical birth in the reference population
-      you select; the absolute probability rests on that assumption, the ratio does
-      not. Cohort: CTU-CHB, 512 records with clinician annotations, 32% acidaemic.
-    </p>
    </div>
   </div>
 </div>
@@ -771,11 +759,6 @@ function redraw(){
   const lastOf = META.records.map(r=>Math.log(r.last));
   BASE_LO = anchorOffset(lastOf, prev);
   const anchor = BASE_LO - logit(prev/100);
-  document.getElementById('basecap').textContent =
-    `A typical record carries odds ${Math.exp(BASE_LO).toFixed(3)} to 1 ` +
-    `(${(100/(1+Math.exp(-BASE_LO))).toFixed(1)}% risk). Ratios are measured ` +
-    `against a typical birth in this population, so they move when you change it.`;
-
   const s = LOGOR.map(v=>v+anchor);
   const orNow = Math.exp(s[NOW]);
   const tbd   = REC.tbd_min[NOW];
