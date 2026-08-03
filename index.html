@@ -14,7 +14,7 @@
     /* Palette shared with the OR-explorer prototype: warm neutrals and a
        red/green force pair rather than the SHAP pink/blue. */
     --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
-    --surface:#fcfcfb; --warm:#f0efec; --ink3:#8a8880; --fhr:#c2185b;
+    --surface:#fcfcfb; --warm:#f0efec; --panel:#ffffff; --sel:#2a78d6; --ink2:#52514e; --ink3:#8a8880; --fhr:#c2185b;
   }
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
@@ -34,11 +34,27 @@
   select,input[type=number]{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--ink)}
   input[type=range]{width:100%}
-  #picker{height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#fff}
-  #picker div{padding:5px 9px;cursor:pointer;white-space:pre;
-    font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
-  #picker div:hover{background:rgba(128,128,128,.14)}
-  #picker div.sel{background:rgba(255,0,81,.14);font-weight:700}
+  #pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+  .pill{border:1px solid var(--line);background:var(--panel);color:var(--ink2);
+    border-radius:999px;padding:6px 13px;font-size:13.5px;font-weight:600;cursor:pointer}
+  .pill:hover{border-color:var(--ink3)}
+  .pill.on{background:var(--sel);border-color:var(--sel);color:#fff}
+  #idfilter{width:100%;padding:9px 11px;font-size:14.5px;border:1px solid var(--line);
+    border-radius:10px;background:var(--panel);color:var(--ink);margin-bottom:10px}
+  #picker{max-height:420px;overflow:auto;border:1px solid var(--line);
+    border-radius:12px;background:var(--panel)}
+  /* One line per record: dot, id, then the facts that decide whether it is
+     worth opening -- cord pH and how long the trace runs. */
+  #picker .row{display:flex;align-items:center;gap:10px;padding:9px 12px;
+    cursor:pointer;border-bottom:1px solid var(--line);font-size:15px}
+  #picker .row:last-child{border-bottom:0}
+  #picker .row:hover{background:var(--warm)}
+  #picker .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  #picker .rid{font-weight:700;font-variant-numeric:tabular-nums}
+  #picker .meta{margin-left:auto;color:var(--mut);font-size:13.5px;
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  #picker .row.sel{background:var(--sel);color:#fff}
+  #picker .row.sel .meta{color:#eaf2ff}
   .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
   /* Columns size to their contents. Every cell is nowrap so a column is exactly
      as wide as its widest value, except the description, which wraps and takes
@@ -70,21 +86,21 @@
     <input type="number" id="prev" min="0.01" max="90" step="0.1" value="18.1">
     <p class="cap" id="basecap"></p>
 
-    <h3>Trace</h3>
-    <label for="outcome">Outcome</label>
-    <select id="outcome">
-      <option value="all">All</option>
-      <option value="1">Acidaemic (pH &lt; 7.20)</option>
-      <option value="0">Normal</option>
-    </select>
-    <label for="sort">Sort by</label>
+    <h3>Recording</h3>
+    <div id="pills">
+      <button class="pill on" data-f="all">All</button>
+      <button class="pill" data-f="705">pH&lt;7.05</button>
+      <button class="pill" data-f="720">pH&lt;7.20</button>
+      <button class="pill" data-f="norm">Normal</button>
+    </div>
+    <input type="search" id="idfilter" placeholder="Filter by record id…">
     <select id="sort">
-      <option value="hi">High → low</option>
-      <option value="lo">Low → high</option>
       <option value="id">Record id</option>
+      <option value="hi">Odds ratio: high → low</option>
+      <option value="lo">Odds ratio: low → high</option>
     </select>
-    <p class="cap" id="pickcap"></p>
     <div id="picker"></div>
+    <p class="cap" id="pickcap"></p>
 
   </div>
 
@@ -169,14 +185,31 @@ async function boot(){
   const cu=document.createElement('option'); cu.value='custom'; cu.textContent='Custom'; ps.appendChild(cu);
   ps.onchange = ()=>{ if(ps.value!=='custom'){ document.getElementById('prev').value=ps.value; redraw(); } };
   document.getElementById('prev').oninput = ()=>{ ps.value='custom'; redraw(); };
-  ['outcome','sort'].forEach(id=>document.getElementById(id).onchange=fillPicker);
+  document.getElementById('sort').onchange=fillPicker;
+  document.getElementById('idfilter').oninput=fillPicker;
+  document.querySelectorAll('#pills .pill').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#pills .pill').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); FILTER=b.dataset.f; fillPicker();
+  });
   fillPicker();
   await load(currentList()[0].id);
 }
 
+let FILTER='all';
+/* pH bands rather than one acidaemic/normal split: 7.05 is the severe cut-off
+   clinicians act on, 7.20 the one this model is trained against, and the two
+   groups are very different sizes. `y` is the model's own label, so a record
+   with no pH in its header still filters correctly on the 7.20 band. */
+function passes(r){
+  if(FILTER==='all') return true;
+  if(FILTER==='705') return r.ph!=null && r.ph < 7.05;
+  if(FILTER==='720') return r.ph!=null ? r.ph < 7.20 : r.y===1;
+  return r.ph!=null ? r.ph >= 7.20 : r.y===0;
+}
 function currentList(){
-  const oc=document.getElementById('outcome').value, so=document.getElementById('sort').value;
-  let L = META.records.filter(r=> oc==='all' || String(r.y)===oc);
+  const so=document.getElementById('sort').value;
+  const q=(document.getElementById('idfilter').value||'').trim();
+  let L = META.records.filter(r=> passes(r) && (!q || String(r.id).includes(q)));
   if(so==='id') L.sort((a,b)=>a.id-b.id);
   else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
   return L;
@@ -184,18 +217,28 @@ function currentList(){
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
   document.getElementById('pickcap').textContent =
-    `Record (${L.length} available) — click a line`;
+    `${L.length} record${L.length===1?'':'s'} — click a line`;
   box.innerHTML='';
   L.forEach(r=>{
     const d=document.createElement('div');
-    d.textContent = `${r.y? '⚠︎':'✓'} ${String(r.id).padEnd(6)}${r.last.toFixed(2).padStart(6)}×`;
-    d.dataset.id=r.id; d.onclick=()=>load(r.id); box.appendChild(d);
+    d.className='row'; d.dataset.id=r.id;
+    const col = r.y ? UP : DOWN;
+    const bits = [];
+    if(r.ph!=null) bits.push(`pH ${r.ph.toFixed(2)}`);
+    if(r.dur!=null) bits.push(`${r.dur}m`);
+    d.innerHTML = `<span class="dot" style="background:${col}"></span>`
+                + `<span class="rid">${r.id}</span>`
+                + `<span class="meta">${bits.join(' · ')}</span>`;
+    d.onclick=()=>load(r.id); box.appendChild(d);
   });
   if(REC) mark(REC.record_id);
 }
 function mark(id){
-  document.querySelectorAll('#picker div').forEach(d=>
-    d.classList.toggle('sel', +d.dataset.id===id));
+  document.querySelectorAll('#picker .row').forEach(d=>{
+    const on = +d.dataset.id===id;
+    d.classList.toggle('sel', on);
+    if(on) d.scrollIntoView({block:'nearest'});
+  });
 }
 
 async function load(id){
