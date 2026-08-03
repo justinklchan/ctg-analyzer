@@ -68,6 +68,9 @@
   th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);
         vertical-align:top;white-space:nowrap;width:1%}
   th{font-size:13px;color:var(--mut);font-weight:600}
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  th.sortable:hover{color:var(--ink)}
+  th.sortable.on{color:var(--sel)}
   td.wrap,th.wrap{white-space:normal;width:auto;min-width:22ch}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   .chip{display:inline-block;border:2.5px solid var(--up);border-radius:12px;padding:5px 11px;
@@ -500,25 +503,74 @@ function drawFig(s){
   });
 }
 
-function drawTable(){
+/* Click a header to re-sort. Rank ('#') is assigned by |phi| BEFORE any
+   re-sort and travels with its row, so sorting by Category does not renumber
+   the ranks into something meaningless. */
+let TSORT = {key:'phi', dir:-1};
+const TCOLS = [
+  {key:'rank',  head:'#',              num:true},
+  {key:'cat',   head:'Category',       num:false},
+  {key:'feat',  head:'Feature',        num:false},
+  {key:'mean',  head:'What it measures', num:false, wrap:true},
+  {key:'val',   head:'Value',          num:true},
+  {key:'pct',   head:'Cohort %ile',    num:true},
+  {key:'med',   head:'Cohort median',  num:true},
+  {key:'mult',  head:'Multiplier',     num:true},
+  {key:'phi',   head:'log-odds φ',     num:true},
+];
+
+function tableRows(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
-  const idx=phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
-  let h='<table><tr><th>#</th><th>Category</th><th>Feature</th>'
-      + '<th class="wrap">What it measures</th>'
-      + '<th class="num">Value</th><th class="num">Cohort %ile</th>'
-      + '<th class="num">Cohort median</th>'
-      + '<th class="num">Multiplier</th><th class="num">log-odds φ</th></tr>';
-  idx.forEach((i,k)=>{
-    const g=META.groups[i], c=FAM[g]||FAM.Other;
-    h+=`<tr><td class="num">${k+1}</td>`
-     + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${g}</span></td>`
-     + `<td><b>${label(F[i])}</b>${unit(F[i])?` <span style="color:#9aa">(${unit(F[i])})</span>`:''}</td>`
-     + `<td class="wrap" style="color:#555">${meaning(F[i])}</td>`
-     + `<td class="num">${X[i]==null?'':X[i]}</td>`
-     + `<td class="num">${pctCell(cohortPct(X[i], META.pctgrid[F[i]]))}</td>`
-     + `<td class="num">${META.pctgrid[F[i]] ? fmtNum(META.pctgrid[F[i]][50]) : ''}</td>`
-     + `<td class="num" style="color:${phi[i]>0?UP:DOWN}">${Math.exp(phi[i]).toFixed(3)}×</td>`
-     + `<td class="num">${phi[i]>0?'+':''}${phi[i].toFixed(4)}</td></tr>`;
+  const rows = phi.map((v,i)=>({
+    i, cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
+    mean: meaning(F[i]), val: X[i],
+    pct: cohortPct(X[i], META.pctgrid[F[i]]),
+    med: META.pctgrid[F[i]] ? META.pctgrid[F[i]][50] : null,
+    mult: Math.exp(v), phi: v,
+  }));
+  rows.sort((a,b)=>Math.abs(b.phi)-Math.abs(a.phi));
+  rows.forEach((r,k)=>r.rank=k+1);
+  const col = TCOLS.find(c=>c.key===TSORT.key) || TCOLS[8];
+  const dir = TSORT.dir;
+  rows.sort((a,b)=>{
+    let x=a[col.key], y=b[col.key];
+    if(col.key==='phi'){ x=Math.abs(x); y=Math.abs(y); }   /* size, not sign */
+    if(x==null) return 1;
+    if(y==null) return -1;
+    return col.num ? dir*(x-y) : dir*String(x).localeCompare(String(y));
+  });
+  return rows;
+}
+
+function sortTable(key){
+  /* First click on a new column sorts descending for numbers (biggest first is
+     what a reader wants) and ascending for text. */
+  const col = TCOLS.find(c=>c.key===key);
+  TSORT = (TSORT.key===key) ? {key, dir:-TSORT.dir}
+                            : {key, dir: col.num ? -1 : 1};
+  drawTable();
+}
+
+function drawTable(){
+  const rows = tableRows();
+  const head = TCOLS.map(c=>{
+    const on = TSORT.key===c.key;
+    const arrow = on ? (TSORT.dir>0 ? ' ▲' : ' ▼') : '';
+    return `<th class="${c.num?'num':''}${c.wrap?' wrap':''} sortable`
+         + `${on?' on':''}" onclick="sortTable('${c.key}')">${c.head}${arrow}</th>`;
+  }).join('');
+  let h = `<table><tr>${head}</tr>`;
+  rows.forEach(r=>{
+    const c = FAM[r.cat]||FAM.Other;
+    h+=`<tr><td class="num">${r.rank}</td>`
+     + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
+     + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
+     + `<td class="wrap" style="color:var(--mut)">${r.mean}</td>`
+     + `<td class="num">${r.val==null?'':r.val}</td>`
+     + `<td class="num">${pctCell(r.pct)}</td>`
+     + `<td class="num">${fmtNum(r.med)}</td>`
+     + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
+     + `<td class="num">${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
   });
   document.getElementById('tbl').innerHTML = h+'</table>';
 }
