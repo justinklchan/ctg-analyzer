@@ -90,7 +90,10 @@
      that decide whether it is worth opening -- cord pH and how long the trace
      runs. The odds ratio is what the list is sorted by, so it has to be on the
      line; a sort you cannot see the key for reads as an arbitrary order. */
-  #picker .row{display:flex;align-items:center;gap:10px;padding:9px 12px;
+  /* Four things on one line in a 290px rail, so the gap comes down from 10 to
+     7: id, ratio, predicted risk, then the facts that decide whether the record
+     is worth opening. */
+  #picker .row{display:flex;align-items:center;gap:7px;padding:9px 10px;
     cursor:pointer;border-bottom:1px solid var(--line);font-size:15px}
   #picker .row:last-child{border-bottom:0}
   #picker .row:hover{background:var(--warm)}
@@ -98,7 +101,16 @@
   #picker .rid{font-weight:700;font-variant-numeric:tabular-nums}
   #picker .or{font-weight:700;font-size:13.5px;font-variant-numeric:tabular-nums;
     white-space:nowrap;padding:1px 7px;border-radius:999px;line-height:1.5}
-  #picker .meta{margin-left:auto;color:var(--mut);font-size:13.5px;
+  /* The model's yes/no call, beside the ratio it is derived from. YES is filled
+     and no is outlined rather than both being coloured chips: a list is scanned
+     for the alarms, and an outlined 'no' recedes instead of competing. */
+  #picker .call{font-weight:800;font-size:11.5px;letter-spacing:.4px;
+    padding:2px 7px;border-radius:6px;white-space:nowrap;cursor:help}
+  #picker .call.y{background:var(--up);color:#fff}
+  #picker .call.n{background:transparent;color:var(--ink3);
+    border:1px solid var(--line)}
+  #picker .row.sel .call.n{color:#eaf2ff;border-color:rgba(255,255,255,.45)}
+  #picker .meta{margin-left:auto;color:var(--mut);font-size:13px;
     font-variant-numeric:tabular-nums;white-space:nowrap}
   #picker .row.sel{background:var(--sel);color:#fff}
   #picker .row.sel .meta{color:#eaf2ff}
@@ -325,6 +337,9 @@ const FAM = {
   'FHR distribution':'#e87ba4','Baseline':'#2a78d6','Variability':'#008300',
   'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
   'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
+  /* Distinct from Elapsed time on purpose: one is a clock in the labour, the
+     other only says how much trace the database kept. */
+  'Labour stage':'#b5651d',
   'Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
 /* The strip shows the three things a tracing is actually read by: the
    baseline, the accelerations, and the decelerations typed against the
@@ -689,21 +704,55 @@ function currentList(){
    for the record you then open, so it goes through the same anchor -- which
    moves with the prevalence slider. Cheap enough to recompute (one bisection
    over ~36 records), and it keeps a single definition of "odds ratio". */
-function currentAnchor(){
+function baseLo(){
   if(!META) return 0;
   const prev = +document.getElementById('prev').value;
   /* Anchored on the distribution the page is SHOWING. Calibrating 'a typical
      birth is 1x' against the full model while displaying a reduced curve puts
      every ratio on the page against a baseline nothing on it uses. */
-  return anchorOffset(META.records.map(lastLogOr), prev) - logit(prev/100);
+  return anchorOffset(META.records.map(lastLogOr), prev);
+}
+function currentAnchor(){
+  if(!META) return 0;
+  const prev = +document.getElementById('prev').value;
+  return baseLo() - logit(prev/100);
+}
+/* THE PREDICTION AS A PROBABILITY. The odds ratio says how this record compares
+   with a typical birth; this says what the model actually thinks the chance of
+   an acidaemic cord gas is. Same number, different question, and the ratio
+   cannot answer the second one on its own -- it needs the reference population,
+   which is what baseLo carries. Moves with the prevalence field, as it must:
+   the same trace in a higher-risk population is a higher probability. */
+function riskOf(r, lo){
+  return 1 / (1 + Math.exp(-(lastLogOr(r) + (lo==null ? baseLo() : lo))));
+}
+function fmtRisk(p){ return (100*p).toFixed(0)+'%'; }
+
+/* THE YES / NO CALL. A threshold on the log odds, computed once in the export
+   at Youden's J and shipped in the index -- so the answer is a property of the
+   model, not of the reference population the reader happens to have selected.
+   Pushing the prevalence up does not turn the model's mind; it changes what a
+   given score means in absolute terms, which is what the percentage is for. */
+function callsYes(r){
+  const yd = META && META.youden;
+  return yd ? lastLogOr(r) >= yd.cut : null;
 }
 
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
-  document.getElementById('pickcap').textContent =
-    `${L.length} record${L.length===1?'':'s'} — click a line`;
+  /* A yes/no is meaningless without the threshold behind it, so the caption
+     states the operating point every time the badge is on screen. */
+  const yd = META && META.youden;
+  document.getElementById('pickcap').innerHTML =
+    `${L.length} record${L.length===1?'':'s'} — click a line`
+    + (yd ? `<br><b>YES/no</b> is the model's call at delivery, at the `
+            + `Youden-optimal cut-off (sensitivity ${yd.sens.toFixed(2)}, `
+            + `specificity ${yd.spec.toFixed(2)}, ${yd.n_yes} of ${yd.n} records `
+            + `called YES). The dot is the measured outcome.` : '');
   box.innerHTML='';
-  const a = Math.exp(currentAnchor());
+  /* Both computed once for the whole list -- each is a bisection over every
+     record, and doing it per row would be 512 of them. */
+  const lo = baseLo(), a = Math.exp(lo - logit((+document.getElementById('prev').value)/100));
   L.forEach(r=>{
     const d=document.createElement('div');
     d.className='row'; d.dataset.id=r.id;
@@ -713,10 +762,21 @@ function fillPicker(){
     if(r.dur!=null) bits.push(`${r.dur}m`);
     const or = Math.exp(lastLogOr(r)) * a;
     const oc = or>1 ? UP : DOWN;
-    d.innerHTML = `<span class="dot" style="background:${col}"></span>`
+    const yes = callsYes(r), p = riskOf(r, lo);
+    /* The call sits beside the measured outcome dot, so a disagreement between
+       what the model said and what happened is one glance rather than two. */
+    const callTip = yes==null ? '' :
+      `the model predicts ${yes?'ACIDAEMIA':'no acidaemia'} at delivery `
+      + `(predicted risk ${fmtRisk(p)}); the dot on the left is what actually `
+      + `happened`;
+    d.innerHTML = `<span class="dot" style="background:${col}" `
+                + `title="${r.y?'Acidaemic':'Not acidaemic'} — the measured outcome"></span>`
                 + `<span class="rid">${r.id}</span>`
                 + `<span class="or" title="odds ratio at delivery" `
                 + `style="background:${oc}1f;color:${oc}">${fmtx(or)}</span>`
+                + (yes==null ? ''
+                   : `<span class="call ${yes?'y':'n'}" title="${callTip}">`
+                     + `${yes?'YES':'no'}</span>`)
                 + `<span class="meta">${bits.join(' · ')}</span>`;
     d.onclick=()=>load(r.id); box.appendChild(d);
   });
@@ -727,7 +787,13 @@ function fillPicker(){
    follow. Rewriting the text in place rather than rebuilding the rows keeps
    the scroll position and the selection where the user left them. */
 function refreshPickerOr(anchor){
-  const a = Math.exp(anchor==null ? currentAnchor() : anchor);
+  const prev = +document.getElementById('prev').value;
+  /* The caller passes the anchor it already computed; the absolute risk needs
+     the base log-odds behind it, which is that anchor plus the logit it had
+     subtracted. Recovering it rather than recomputing keeps the list's
+     percentage and the headline's identical to the last decimal. */
+  const lo = (anchor==null) ? baseLo() : anchor + logit(prev/100);
+  const a = Math.exp(lo - logit(prev/100));
   const by = {}; (META.records||[]).forEach(r=>{ by[r.id]=r; });
   document.querySelectorAll('#picker .row').forEach(d=>{
     const r = by[+d.dataset.id], el = d.querySelector('.or');
@@ -736,6 +802,13 @@ function refreshPickerOr(anchor){
     el.textContent = fmtx(or);
     el.style.background = oc+'1f';
     el.style.color = oc;
+    /* The call is anchor-independent, so only its tooltip -- which quotes the
+       absolute risk -- has to follow the prevalence field. */
+    const cl = d.querySelector('.call');
+    if(cl) cl.title = `the model predicts `
+      + `${callsYes(r)?'ACIDAEMIA':'no acidaemia'} at delivery `
+      + `(predicted risk ${fmtRisk(riskOf(r, lo))}); the dot on the left is `
+      + `what actually happened`;
   });
 }
 function mark(id){
