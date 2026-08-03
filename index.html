@@ -1387,6 +1387,20 @@ function drawFig(s){
   const yrefOf = r => r===1?'y domain':(r===2?'y2 domain':'y3 domain');
   const xrefOf = r => r===1?'x':(r===2?'x2':'x3');
 
+  /* EVERYTHING AFTER THE CURSOR IS DIMMED. At minute t the score has seen only
+     what is left of the line; what lies to the right had not happened yet. The
+     whole recording is still drawn -- truncating it made every click look like
+     the chart was collapsing -- but a white scrim over the later part says
+     'not yet known' without removing the context that makes the moment
+     readable. Drawn before the cursor and the guides so those stay crisp on top
+     of it, and skipped at delivery, where there is no future to dim. */
+  if(x[NOW] < xrange[1] - 1e-9){
+    for(let r=1;r<=rows;r++) shapes.push({type:'rect', layer:'above',
+      xref:xrefOf(r), yref:yrefOf(r),
+      x0:x[NOW], x1:xrange[1], y0:0, y1:1,
+      fillcolor:'rgba(255,255,255,.62)', line:{width:0}});
+  }
+
   /* Three near-black vertical lines with nothing to tell them apart read as
      chart furniture. They are not: the dashed and dotted ones are the far edge
      of the 30- and 60-minute lookbacks that every win_/lwin_ feature in the
