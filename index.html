@@ -52,10 +52,31 @@
   .badge{font-size:14px;font-weight:700;border-radius:999px;padding:4px 13px}
   .bad{color:#c62828;background:#fdecea}
   .ok{color:#2e7d32;background:#e8f5e9}
+  /* Amber, not red: a thin toco is a caveat on the score, not a finding about
+     the baby, and it must not compete with the outcome badge beside it. */
+  .warn{color:#8a5a00;background:#fdf1d8;border:1px solid #efd9a5;cursor:help}
+  /* "not measured" has to look unlike every number in the column, or it reads
+     as one. Italic, muted, and dashed-underlined so it invites the tooltip. */
+  .miss{color:var(--ink3);font-style:italic;
+    border-bottom:1px dashed var(--ink3);cursor:help}
   label{display:block;font-size:14px;color:var(--mut);margin:12px 0 4px}
   select,input[type=number]{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--ink)}
   input[type=range]{width:100%}
+  label.check{display:flex;align-items:center;gap:8px;margin:0;padding:4px 2px;
+    cursor:pointer;color:var(--ink);font-size:14px;line-height:1.3;border-radius:7px}
+  label.check:hover{background:rgba(0,0,0,.04)}
+  label.check input{margin:0;flex:none;accent-color:var(--sel);cursor:pointer}
+  /* The swatch is the band colour from the chart, so the list reads as a key
+     to the stack as well as a set of switches. */
+  label.check .sw{width:10px;height:10px;border-radius:3px;flex:none}
+  /* An unticked family is dimmed rather than hidden: the point is to see what
+     you have taken out, not to lose track of it. */
+  label.check.off{color:var(--ink3)}
+  label.check.off .sw{opacity:.3}
+  label.check .amt{margin-left:auto;font-size:12.5px;color:var(--mut);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  label.check.off .amt{opacity:.45}
   #pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
   .pill{border:1px solid var(--line);background:var(--panel);color:var(--ink2);
     border-radius:999px;padding:6px 13px;font-size:13.5px;font-weight:600;cursor:pointer}
@@ -216,6 +237,16 @@
     <label for="prev">Prevalence (%)</label>
     <input type="number" id="prev" min="0.01" max="90" step="0.1" value="18.1">
 
+    <h3>What the score uses</h3>
+    <!-- One row per feature family, built from the data so it cannot drift
+         from the bands on the chart. -->
+    <div id="famlist"></div>
+    <p class="cap">
+      Unticking subtracts that family's contribution from the curve. It is not
+      a model retrained without it: the signal is removed, not redistributed
+      onto what is left. <a href="#" id="famall">Turn all on</a>
+    </p>
+
     <h3>Recording</h3>
     <div id="pills">
       <button class="pill on" data-f="all">All</button>
@@ -342,6 +373,11 @@ const BAND_Y = {tachycardia:[160,FHR_RANGE[1]], bradycardia:[FHR_RANGE[0],110]};
    so the two domains have to be readable from outside the layout literal that
    sets them. */
 const FHR_DOM = [0.24, 0.48], UC_DOM = [0, 0.20];
+/* Below this much toco the record gets a warning next to its outcome badge.
+   The feature builder's own floor is half of a ten-minute window; a record that
+   only just clears that across the whole labour is still one whose contraction
+   features are mostly guesswork, so the badge trips earlier than the mask. */
+const UC_COV_WARN = 0.70;
 
 /* Plotly wants a fillcolor with its own alpha; the palette is hex. */
 function rgba(hex, a){
@@ -376,15 +412,102 @@ let ZX=null;
 /* The x extent of the whole record, in data units. Written by drawFig. */
 let FIT=[0,1];
 
+/* WHICH FAMILIES THE SCORE IS ALLOWED TO USE.
+ *
+ * The contributions are additive in log-odds, so a family can be taken out of
+ * the score by subtracting its band: the curve, the waterfall, the chips and
+ * the table all follow from that one subtraction.
+ *
+ * SAY WHAT THIS IS AND IS NOT. It answers "what is left once this family's
+ * contribution is removed" -- it is NOT a model retrained without the family,
+ * which would redistribute that signal onto the remaining features rather than
+ * lose it. Two families a model leans on jointly will each look smaller here
+ * than a retrain would make the survivor.
+ *
+ * Maternal history starts off. Its nine inputs are fixed before the trace
+ * begins, so its contribution is close to a constant offset -- measured over
+ * 150 records it moves by a median of 0.085 in log-odds across a whole labour
+ * while sitting at 0.5x to 1.4x -- and that offset sits under every curve
+ * making the trace harder to read.
+ */
+const MH_GROUP = 'Maternal history';
+let OFF = new Set([MH_GROUP]);
+/* group -> the feature indices in it, resolved once META is loaded. */
+let GIDX = {};
+
+/* This record's log-odds curve with every switched-off band subtracted. */
+function curveOf(){
+  const drop = [...OFF].filter(g=>REC.phi_group && REC.phi_group[g]);
+  if(!drop.length) return REC.log_or.slice();
+  return REC.log_or.map((v,i)=>
+    v - drop.reduce((s,g)=>{ const c=REC.phi_group[g][i]; return s+(c==null?0:c); }, 0));
+}
+/* Per-feature contributions at minute t, with switched-off families zeroed --
+   so the bar, the chips and the table drop them without any of them needing to
+   know the rule. */
+function phiAt(t){
+  const p = REC.phi[t].slice();
+  OFF.forEach(g=>(GIDX[g]||[]).forEach(i=>{ p[i] = 0; }));
+  return p;
+}
+/* The bands to stack, in the same order, minus the switched-off ones. */
+function groupsOf(){ return REC.groups.filter(g=>!OFF.has(g)); }
+
+/* THE RECORD LIST HAS TO ANSWER TO THE SAME SWITCHES. `last` is the full-model
+   odds ratio at delivery; every family the reader has switched off has to come
+   back out of it, exactly as curveOf() does for the record on screen. Without
+   this the list showed -- and sorted by -- the full model while the page it
+   indexes showed a reduced one, and since maternal history is off by default
+   the two disagreed on first load: 7.27x in the list against 5.26x on the page.
+
+   One function, used by the list, the sort and the population anchor alike, so
+   the three cannot drift apart again. */
+function lastLogOr(r){
+  let v = Math.log(r.last);
+  if(r.glast) OFF.forEach(g=>{ const c = r.glast[g]; if(c!=null) v -= c; });
+  return v;
+}
+
+/* The switch list. Each row carries what that family is worth AT THE CURSOR,
+   so the decision to drop one is made against a number rather than a guess --
+   and the numbers move as you scrub. */
+function drawFamList(){
+  const box = document.getElementById('famlist');
+  if(!box || !REC) return;
+  box.innerHTML = REC.groups.map(g=>{
+    const c = FAM[g] || FAM.Other;
+    const v = (REC.phi_group[g] || [])[NOW];
+    const on = !OFF.has(g);
+    const mult = (v==null || !isFinite(v)) ? '—' : fmtx(Math.exp(v));
+    const col = (v==null || !isFinite(v)) ? 'var(--mut)' : (v>0 ? UP : DOWN);
+    return `<label class="check${on?'':' off'}">`
+         + `<input type="checkbox" data-g="${esc(g)}"${on?' checked':''}>`
+         + `<span class="sw" style="background:${c}"></span>`
+         + `<span>${esc(g)}</span>`
+         + `<span class="amt" style="color:${on?col:''}">${mult}</span>`
+         + '</label>';
+  }).join('');
+  box.querySelectorAll('input[data-g]').forEach(b=>b.onchange=()=>{
+    if(b.checked) OFF.delete(b.dataset.g); else OFF.add(b.dataset.g);
+    /* The list is sorted by the odds ratio it displays, and both now depend on
+       which families are on, so the whole list is rebuilt rather than just
+       relabelled -- otherwise the numbers update and the order does not. */
+    fillPicker();
+    redraw();
+  });
+}
+
 const logit = p => Math.log(p/(1-p));
 const fmtx  = v => v.toFixed(2)+'×';
 
 /* Baseline odds solved so the cohort's mean predicted risk equals the chosen
    prevalence. Same bisection the Python app does with brentq -- the mean of a
    sigmoid is not the sigmoid of a mean, so logit(prevalence) is not the answer. */
-function anchorOffset(lastLogOr, targetPct){
+/* `lastLo` is the array of per-record log odds at delivery. Named to keep clear
+   of lastLogOr(), the function that produces each of them. */
+function anchorOffset(lastLo, targetPct){
   const p = Math.min(Math.max(targetPct/100, 1e-6), 1-1e-6);
-  const mean = c => lastLogOr.reduce((s,v)=>s+1/(1+Math.exp(-(v+c))),0)/lastLogOr.length;
+  const mean = c => lastLo.reduce((s,v)=>s+1/(1+Math.exp(-(v+c))),0)/lastLo.length;
   let lo=-25, hi=25;
   for(let i=0;i<200;i++){ const m=(lo+hi)/2; if(mean(m)<p) lo=m; else hi=m; }
   return (lo+hi)/2;
@@ -506,6 +629,15 @@ async function boot(){
   syncZoomUi();
 
   META = await (await fetch('data/index.json')).json();
+  /* Resolved from META rather than from the feature names, so a feature moved
+     between groups in Python needs no change here. */
+  GIDX = {};
+  META.groups.forEach((g,i)=>{ (GIDX[g] = GIDX[g] || []).push(i); });
+  document.getElementById('famall').onclick = ev=>{
+    ev.preventDefault();
+    OFF.clear(); redraw();
+  };
+
   const ps = document.getElementById('preset');
   Object.entries(META.prevalence_presets).forEach(([k,v])=>{
     const o=document.createElement('option'); o.value=v; o.textContent=k; ps.appendChild(o);});
@@ -548,7 +680,9 @@ function currentList(){
       return d*(a.ph-b.ph) || a.id-b.id;
     });
   }
-  else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
+  /* Sorted by the same figure the row displays, not by the full model. */
+  else L.sort((a,b)=> so==='hi' ? lastLogOr(b)-lastLogOr(a)
+                                : lastLogOr(a)-lastLogOr(b));
   return L;
 }
 /* The odds ratio the list shows has to be the same number the headline shows
@@ -558,7 +692,10 @@ function currentList(){
 function currentAnchor(){
   if(!META) return 0;
   const prev = +document.getElementById('prev').value;
-  return anchorOffset(META.records.map(r=>Math.log(r.last)), prev) - logit(prev/100);
+  /* Anchored on the distribution the page is SHOWING. Calibrating 'a typical
+     birth is 1x' against the full model while displaying a reduced curve puts
+     every ratio on the page against a baseline nothing on it uses. */
+  return anchorOffset(META.records.map(lastLogOr), prev) - logit(prev/100);
 }
 
 function fillPicker(){
@@ -574,7 +711,7 @@ function fillPicker(){
     const bits = [];
     if(r.ph!=null) bits.push(`pH ${r.ph.toFixed(2)}`);
     if(r.dur!=null) bits.push(`${r.dur}m`);
-    const or = r.last * a;
+    const or = Math.exp(lastLogOr(r)) * a;
     const oc = or>1 ? UP : DOWN;
     d.innerHTML = `<span class="dot" style="background:${col}"></span>`
                 + `<span class="rid">${r.id}</span>`
@@ -595,7 +732,7 @@ function refreshPickerOr(anchor){
   document.querySelectorAll('#picker .row').forEach(d=>{
     const r = by[+d.dataset.id], el = d.querySelector('.or');
     if(!r || !el) return;
-    const or = r.last * a, oc = or>1 ? UP : DOWN;
+    const or = Math.exp(lastLogOr(r)) * a, oc = or>1 ? UP : DOWN;
     el.textContent = fmtx(or);
     el.style.background = oc+'1f';
     el.style.color = oc;
@@ -611,7 +748,7 @@ function mark(id){
 
 async function load(id){
   REC = await (await fetch(`data/rec_${id}.json`)).json();
-  LOGOR = REC.log_or;
+  LOGOR = curveOf();
   NOW = LOGOR.length-1;      // opens at delivery; click the curve to move it
   ZX  = null;                // a new record starts fully zoomed out
   const sc = document.getElementById('cursor');
@@ -755,8 +892,9 @@ function setNow(i){
 
 function redraw(){
   if(!REC) return;
+  LOGOR = curveOf();          // the toggle can change it between redraws
   const prev = +document.getElementById('prev').value;
-  const lastOf = META.records.map(r=>Math.log(r.last));
+  const lastOf = META.records.map(lastLogOr);
   BASE_LO = anchorOffset(lastOf, prev);
   const anchor = BASE_LO - logit(prev/100);
   const s = LOGOR.map(v=>v+anchor);
@@ -765,13 +903,25 @@ function redraw(){
   const atNow = NOW===LOGOR.length-1 ? 'at delivery'
               : `at minute ${REC.t_min[NOW]} (−${tbd.toFixed(0)} min)`;
 
+  /* A toco that was barely recording is the one quality problem a reader cannot
+     see for themselves: the FHR panel looks fine, the UC panel looks quiet, and
+     quiet reads as calm. It goes next to the outcome badge because it qualifies
+     the whole score, not one panel of it. */
+  const ucCov = REC.cov ? REC.cov.uc : null;
+  const covBadge = (ucCov!=null && ucCov < UC_COV_WARN)
+    ? `<span class="badge warn" title="Contraction features are computed only `
+      + `where the toco was recording. Below about half a window they are given `
+      + `to the model as missing rather than as zero.">`
+      + `Toco recorded ${Math.round(ucCov*100)}% of the time</span>`
+    : '';
   document.getElementById('title').innerHTML =
     `<img src="logo.png" alt="Omega" style="height:64px;width:auto">` +
     `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
     (REC.hypoxia? 'Acidaemic — cord pH &lt; 7.20' : 'Not acidaemic — cord pH ≥ 7.20') +
-    '</span>';
+    '</span>' + covBadge;
   document.getElementById('scrublab').textContent =
     `${fmtx(orNow)} ${atNow}`;
+  drawFamList();
   refreshPickerOr(anchor);
   drawMeta();
   drawBar(anchor, orNow, atNow);
@@ -820,11 +970,26 @@ function drawMeta(){
 }
 
 function segments(topk){
-  const phi = REC.phi[NOW], F = META.feat_cols;
-  const idx = phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
+  const phi = phiAt(NOW), F = META.feat_cols;
+  /* SWITCHED-OFF FAMILIES ARE DROPPED, NOT RANKED WITH A ZERO. phiAt() zeroes
+     them so the bar's arithmetic stays right, but zero is still a magnitude to
+     sort by: with one family left on, features the reader had just switched off
+     sorted into the top six and filled the chip row with 1.00x terms. Nothing
+     is lost by removing them here -- they contribute nothing to the total
+     either way, so the product the row spells out is unchanged. */
+  const idx = phi.map((v,i)=>i)
+                 .filter(i=>!OFF.has(META.groups[i]))
+                 .sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
   const keep = idx.slice(0,topk), rest = idx.slice(topk);
-  const segs = keep.map(i=>({phi:phi[i], name:label(F[i]),
-     sub:`${REC.X[NOW][i]} ${unit(F[i])} — ${pctLabel(cohortPct(REC.X[NOW][i], META.pctgrid[F[i]]))}`}));
+  /* A feature can be UNKNOWN rather than zero -- the pipeline refuses to state
+     a rate from a channel that was barely recorded. The model still routes a
+     missing value down a branch and SHAP still charges it a contribution, so
+     the term belongs on the chip row; what it must not do is show a blank where
+     a measurement would be and let it read as a number nobody bothered to
+     print. */
+  const segs = keep.map(i=>({phi:phi[i], name:label(F[i]), miss:REC.X[NOW][i]==null,
+     sub: REC.X[NOW][i]==null ? 'not measured — channel too sparse'
+        : `${REC.X[NOW][i]} ${unit(F[i])} — ${pctLabel(cohortPct(REC.X[NOW][i], META.pctgrid[F[i]]))}`}));
   [[1,'raising'],[-1,'lowering']].forEach(([sg,w])=>{
     const mem = rest.filter(i=>Math.sign(phi[i])===sg)
                     .sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
@@ -889,7 +1054,11 @@ function drawBar(anchor, orNow, atNow){
     if(v>=loL-pad && v<=hiL+pad){ ticks.push(v); tt.push(Math.pow(2,k)+'x'); } }
   ann.push({x:total,y:1.02,yref:'paper',text:`<b>${fmtx(orNow)}</b>`,showarrow:false,
             xanchor:'center',yanchor:'bottom',font:{size:20,color:'#111'}});
-  if(anchor>=loL-pad && anchor<=hiL+pad)
+  /* Switch most families off and the blocks that remain move the odds barely at
+     all, so the total comes to rest on top of the base value and the two labels
+     print over each other. The total is the one that has to survive. */
+  const drawn = (hiL+pad) - (loL-pad);
+  if(anchor>=loL-pad && anchor<=hiL+pad && Math.abs(anchor-total) > 0.08*drawn)
     ann.push({x:anchor,y:1.02,yref:'paper',text:'base value',showarrow:false,
               xanchor:'center',yanchor:'bottom',font:{size:13,color:'#888'}});
   ann.push({x:0,y:1.34,xref:'paper',yref:'paper',xanchor:'left',showarrow:false,
@@ -964,9 +1133,12 @@ function bandStack(P, base){
 
 function drawFig(s){
   const x = REC.tbd_min.map(v=>-v);
-  const G = REC.groups;
+  const G = groupsOf();
   const P = G.map(g=>REC.phi_group[g].map(v=>v==null?0:v));
-  const anchorBase = s[0]-REC.log_or[0];
+  /* Against LOGOR, not REC.log_or: with maternal history switched off the two
+     differ by exactly the offset that was removed, and using the raw curve
+     here would put the bands back where the removed group had them. */
+  const anchorBase = s[0]-LOGOR[0];
   const st = bandStack(P, anchorBase);
   const traces=[];
   /* The WHOLE curve is drawn, always. Truncating it at the cursor made every
@@ -1295,6 +1467,8 @@ let TWIN = 'all';   /* which window the table is filtered to */
 
 function tableRows(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
+  /* Dropped outright rather than shown with a zero contribution: a row reading
+     0.000× would look like a finding about this record instead of a setting. */
   let rows = phi.map((v,i)=>({
     i, cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
     mean: meaning(F[i]), val: X[i], win: win(F[i]), winr: winRank(win(F[i])),
@@ -1305,6 +1479,7 @@ function tableRows(){
   /* Ranked over ALL features, then filtered: a rank is a feature's standing in
      the whole explanation, and renumbering 1..n inside a filtered view would
      claim the top row of "Last 30 min" is the record's strongest driver. */
+  rows = rows.filter(r=>!OFF.has(r.cat));
   rows.sort((a,b)=>Math.abs(b.phi)-Math.abs(a.phi));
   rows.forEach((r,k)=>r.rank=k+1);
   if(TWIN!=='all') rows = rows.filter(r=>r.win===TWIN);
@@ -1336,9 +1511,10 @@ function drawWinPills(){
   const box = document.getElementById('winpills');
   if(!box) return;
   const n = {};
-  META.feat_cols.forEach(f=>{ const w=win(f); n[w]=(n[w]||0)+1; });
+  const cols = META.feat_cols.filter((f,i)=> !OFF.has(META.groups[i]));
+  cols.forEach(f=>{ const w=win(f); n[w]=(n[w]||0)+1; });
   const spans = Object.keys(n).sort((a,b)=>winRank(a)-winRank(b));
-  box.innerHTML = [['all', 'All', META.feat_cols.length]]
+  box.innerHTML = [['all', 'All', cols.length]]
     .concat(spans.map(w=>[w, w, n[w]]))
     .map(([k,lab,c])=>`<button class="pill${TWIN===k?' on':''}" data-w="${esc(k)}">`
        + `${esc(lab)}<span class="n">${c}</span></button>`).join('');
@@ -1375,7 +1551,11 @@ function drawTable(){
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
      + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
      + `<td style="color:var(--mut)">${esc(r.win)}</td>`
-     + `<td class="num">${r.val==null?'':r.val}</td>`
+     + `<td class="num">${r.val==null
+          ? '<span class="miss" title="The channel this needs was too sparse in '
+            + 'this window to state a value. The model was given a missing value, '
+            + 'not a zero.">not measured</span>'
+          : r.val}</td>`
      + `<td class="num">${pctCell(r.pct)}</td>`
      + `<td class="num">${fmtNum(r.med)}</td>`
      + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
