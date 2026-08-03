@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTG explained risk</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;600;700;800&display=swap"
+      rel="stylesheet">
+<style>
+  :root{
+    /* Palette shared with the OR-explorer prototype: warm neutrals and a
+       red/green force pair rather than the SHAP pink/blue. */
+    --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
+    --surface:#fcfcfb; --warm:#f0efec; --ink3:#8a8880; --fhr:#c2185b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--surface)}
+  select,input,button,textarea{font-family:inherit}
+  #wrap{display:flex;min-height:100vh}
+  #side{width:290px;flex:none;border-right:1px solid var(--line);padding:16px 14px;
+        position:sticky;top:0;height:100vh;overflow:auto;background:var(--warm)}
+  #main{flex:1;min-width:0;padding:14px 20px 40px}
+  h1{font-size:26px;margin:0 0 6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  h2{font-size:19px;margin:20px 0 6px}
+  h3{font-size:15px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+  .badge{font-size:14px;font-weight:700;border-radius:999px;padding:4px 13px}
+  .bad{color:#c62828;background:#fdecea}
+  .ok{color:#2e7d32;background:#e8f5e9}
+  label{display:block;font-size:14px;color:var(--mut);margin:12px 0 4px}
+  select,input[type=number]{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink)}
+  input[type=range]{width:100%}
+  #picker{height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#fff}
+  #picker div{padding:5px 9px;cursor:pointer;white-space:pre;
+    font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+  #picker div:hover{background:rgba(128,128,128,.14)}
+  #picker div.sel{background:rgba(255,0,81,.14);font-weight:700}
+  .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
+  /* Columns size to their contents. Every cell is nowrap so a column is exactly
+     as wide as its widest value, except the description, which wraps and takes
+     whatever slack is left -- otherwise the long prose column stretched every
+     other column with it and left the numbers floating a long way from their
+     labels. */
+  table{border-collapse:collapse;width:100%;table-layout:auto;font-size:14px;margin-top:8px}
+  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);
+        vertical-align:top;white-space:nowrap;width:1%}
+  th{font-size:13px;color:var(--mut);font-weight:600}
+  td.wrap,th.wrap{white-space:normal;width:auto;min-width:22ch}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .chip{display:inline-block;border:2.5px solid var(--up);border-radius:12px;padding:5px 11px;
+        font-weight:800;font-size:20px;color:var(--up);margin:0 3px}
+  .chip.dn{border-color:var(--down);color:var(--down)}
+  .chip.tot{background:var(--up);color:#fff}
+  .chipwrap{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+  .chipbox{text-align:center}
+  .chipbox small{display:block;color:var(--mut);font-size:12px;margin-top:3px;max-width:150px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <h3>Baseline risk</h3>
+    <label for="preset">Reference population</label>
+    <select id="preset"></select>
+    <label for="prev">Prevalence (%)</label>
+    <input type="number" id="prev" min="0.01" max="90" step="0.1" value="18.1">
+    <p class="cap" id="basecap"></p>
+
+    <h3>Trace</h3>
+    <label for="outcome">Outcome</label>
+    <select id="outcome">
+      <option value="all">All</option>
+      <option value="1">Acidaemic (pH &lt; 7.20)</option>
+      <option value="0">Normal</option>
+    </select>
+    <label for="sort">Sort by</label>
+    <select id="sort">
+      <option value="hi">High → low</option>
+      <option value="lo">Low → high</option>
+      <option value="id">Record id</option>
+    </select>
+    <p class="cap" id="pickcap"></p>
+    <div id="picker"></div>
+
+  </div>
+
+  <div id="main">
+    <h1 id="title">Loading…</h1>
+    <p class="cap" id="headline"></p>
+    <h2>Clinical metadata</h2>
+    <div id="meta"></div>
+    <div id="bar"></div>
+    <p class="cap" id="barcap"></p>
+    <div class="chipwrap" id="chips"></div>
+    <div id="fig"></div>
+    <h2>All feature contributions</h2>
+    <div id="tbl"></div>
+    <p class="cap" style="margin-top:22px">
+      Out-of-fold predictions under record-grouped cross-validation: no record was
+      ever scored by a model that saw it. The only label is cord pH at birth, so a
+      value here is “given what is known at this minute, this baby ends acidaemic
+      with probability p”. Discrimination falls from about 0.68 at delivery to near
+      chance an hour out — read early positions as explanation, not as warning.
+      Odds ratios are measured against a typical birth in the reference population
+      you select; the absolute probability rests on that assumption, the ratio does
+      not. Cohort: CTU-CHB, 512 records with clinician annotations, 32% acidaemic.
+    </p>
+  </div>
+</div>
+
+<script>
+const FAM = {
+  'FHR distribution':'#e87ba4','Baseline':'#2a78d6','Variability':'#008300',
+  'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
+  'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
+  'Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
+const EVC = {'contraction':FAM['Uterine activity'],'acceleration':FAM['Accelerations'],
+             'deceleration':FAM['Decelerations']};
+const UP='#e34948', DOWN='#008300', FHRC='#c2185b';
+/* Plotly does not inherit the page font, so the charts have to be told. */
+const PLOT_FONT='Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+let META=null, REC=null, NOW=0, BASE_LO=0, LOGOR=[];
+
+const logit = p => Math.log(p/(1-p));
+const fmtx  = v => v.toFixed(2)+'×';
+
+/* Baseline odds solved so the cohort's mean predicted risk equals the chosen
+   prevalence. Same bisection the Python app does with brentq -- the mean of a
+   sigmoid is not the sigmoid of a mean, so logit(prevalence) is not the answer. */
+function anchorOffset(lastLogOr, targetPct){
+  const p = Math.min(Math.max(targetPct/100, 1e-6), 1-1e-6);
+  const mean = c => lastLogOr.reduce((s,v)=>s+1/(1+Math.exp(-(v+c))),0)/lastLogOr.length;
+  let lo=-25, hi=25;
+  for(let i=0;i<200;i++){ const m=(lo+hi)/2; if(mean(m)<p) lo=m; else hi=m; }
+  return (lo+hi)/2;
+}
+/* Where a value sits in the cohort, as a percentile. `grid` is the feature's
+   0..100th percentiles (101 numbers), so this inverts the quantile function by
+   bisection -- exact to a percentile, with no arbitrary "high"/"very high"
+   bucket edges to argue about. */
+function cohortPct(v, grid){
+  if(v==null || !grid) return null;
+  if(v<=grid[0]) return 0;
+  if(v>=grid[100]) return 100;
+  let lo=0, hi=100;
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(grid[m]<=v) lo=m; else hi=m; }
+  const span = grid[hi]-grid[lo];
+  return span>0 ? lo + (v-grid[lo])/span : lo;   /* ties: bottom of the plateau */
+}
+function pctLabel(p){
+  if(p==null || !isFinite(p)) return 'unknown';
+  const n=Math.round(p);
+  const suf = (n%100>=10 && n%100<=20) ? 'th' : ({1:'st',2:'nd',3:'rd'}[n%10] || 'th');
+  return `${n}${suf} pct`;
+}
+function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
+function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
+function meaning(f){ const d=META.doc[f]; return d? d[2] : ''; }
+
+async function boot(){
+  META = await (await fetch('data/index.json')).json();
+  const ps = document.getElementById('preset');
+  Object.entries(META.prevalence_presets).forEach(([k,v])=>{
+    const o=document.createElement('option'); o.value=v; o.textContent=k; ps.appendChild(o);});
+  const cu=document.createElement('option'); cu.value='custom'; cu.textContent='Custom'; ps.appendChild(cu);
+  ps.onchange = ()=>{ if(ps.value!=='custom'){ document.getElementById('prev').value=ps.value; redraw(); } };
+  document.getElementById('prev').oninput = ()=>{ ps.value='custom'; redraw(); };
+  ['outcome','sort'].forEach(id=>document.getElementById(id).onchange=fillPicker);
+  fillPicker();
+  await load(currentList()[0].id);
+}
+
+function currentList(){
+  const oc=document.getElementById('outcome').value, so=document.getElementById('sort').value;
+  let L = META.records.filter(r=> oc==='all' || String(r.y)===oc);
+  if(so==='id') L.sort((a,b)=>a.id-b.id);
+  else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
+  return L;
+}
+function fillPicker(){
+  const L=currentList(), box=document.getElementById('picker');
+  document.getElementById('pickcap').textContent =
+    `Record (${L.length} available) — click a line`;
+  box.innerHTML='';
+  L.forEach(r=>{
+    const d=document.createElement('div');
+    d.textContent = `${r.y? '⚠︎':'✓'} ${String(r.id).padEnd(6)}${r.last.toFixed(2).padStart(6)}×`;
+    d.dataset.id=r.id; d.onclick=()=>load(r.id); box.appendChild(d);
+  });
+  if(REC) mark(REC.record_id);
+}
+function mark(id){
+  document.querySelectorAll('#picker div').forEach(d=>
+    d.classList.toggle('sel', +d.dataset.id===id));
+}
+
+async function load(id){
+  REC = await (await fetch(`data/rec_${id}.json`)).json();
+  LOGOR = REC.log_or;
+  NOW = LOGOR.length-1;      // opens at delivery; click the curve to move it
+  mark(id); redraw();
+}
+
+function redraw(){
+  if(!REC) return;
+  const prev = +document.getElementById('prev').value;
+  const lastOf = META.records.map(r=>Math.log(r.last));
+  BASE_LO = anchorOffset(lastOf, prev);
+  const anchor = BASE_LO - logit(prev/100);
+  document.getElementById('basecap').textContent =
+    `A typical record carries odds ${Math.exp(BASE_LO).toFixed(3)} to 1 ` +
+    `(${(100/(1+Math.exp(-BASE_LO))).toFixed(1)}% risk). Ratios are measured ` +
+    `against a typical birth in this population, so they move when you change it.`;
+
+  const s = LOGOR.map(v=>v+anchor);
+  const orNow = Math.exp(s[NOW]);
+  const risk  = 1/(1+Math.exp(-(LOGOR[NOW]+BASE_LO)));
+  const tbd   = REC.tbd_min[NOW];
+  const atNow = NOW===LOGOR.length-1 ? 'at delivery'
+              : `at minute ${REC.t_min[NOW]} (−${tbd.toFixed(0)} min)`;
+
+  document.getElementById('title').innerHTML =
+    `<img src="logo.png" alt="Omega" style="height:64px;width:auto">` +
+    `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
+    (REC.hypoxia? 'Acidaemic — cord pH &lt; 7.20' : 'Not acidaemic — cord pH ≥ 7.20') +
+    '</span>';
+  document.getElementById('headline').innerHTML =
+    `<b>${fmtx(orNow)}</b> ${atNow} — absolute risk <b>${(100*risk).toFixed(1)}%</b> ` +
+    `against a ${prev.toFixed(2)}% baseline. Only the multiplier comes from the ` +
+    `CTG. Click anywhere on the risk curve to read another minute.`;
+
+  drawMeta();
+  drawBar(anchor, orNow, atNow);
+  drawFig(s);
+  drawTable();
+}
+
+function segments(topk){
+  const phi = REC.phi[NOW], F = META.feat_cols;
+  const idx = phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
+  const keep = idx.slice(0,topk), rest = idx.slice(topk);
+  const segs = keep.map(i=>({phi:phi[i], name:label(F[i]),
+     sub:`${REC.X[NOW][i]} ${unit(F[i])} — ${pctLabel(cohortPct(REC.X[NOW][i], META.pctgrid[F[i]]))}`}));
+  [[1,'raising'],[-1,'lowering']].forEach(([sg,w])=>{
+    const v = rest.filter(i=>Math.sign(phi[i])===sg).reduce((s,i)=>s+phi[i],0);
+    const n = rest.filter(i=>Math.sign(phi[i])===sg).length;
+    if(Math.abs(v)>1e-9) segs.push({phi:v, name:`${n} other factors, ${w}`, sub:'pooled'});
+  });
+  return segs;
+}
+
+function drawBar(anchor, orNow, atNow){
+  const segs = segments(6);
+  const pos = segs.filter(s=>s.phi>0).sort((a,b)=>b.phi-a.phi);
+  const neg = segs.filter(s=>s.phi<0).sort((a,b)=>a.phi-b.phi);
+  const total = segs.reduce((s,d)=>s+d.phi,0) + anchor;
+  let cur = total - pos.reduce((s,d)=>s+d.phi,0);
+  const span = segs.reduce((s,d)=>s+Math.abs(d.phi),0) || 1;
+  const traces=[], ann=[];
+  pos.concat(neg).forEach(d=>{
+    const w=Math.abs(d.phi), up=d.phi>0;
+    traces.push({type:'bar',orientation:'h',x:[w],y:[''],base:[cur],
+      marker:{color:up?UP:DOWN,line:{color:'#fff',width:1.5}},showlegend:false,
+      hovertemplate:`<b>${d.name}</b><br>${d.sub}<br>×${Math.exp(d.phi).toFixed(3)}<extra></extra>`});
+    const room=Math.round(140*w/span);
+    if(room>=6) ann.push({x:cur+w/2,y:0,text:d.name.length<=room?d.name:d.name.slice(0,room-1)+'…',
+      showarrow:false,font:{size:11,color:'#fff'}});
+    cur+=w;
+  });
+  const loL = total - pos.reduce((s,d)=>s+d.phi,0), hiL = cur;
+  const pad = Math.max(.25,.06*(hiL-loL));
+  const ticks=[]; const tt=[];
+  for(let k=-9;k<=9;k++){ const v=Math.log(Math.pow(2,k));
+    if(v>=loL-pad && v<=hiL+pad){ ticks.push(v); tt.push(Math.pow(2,k)+'x'); } }
+  ann.push({x:total,y:1.02,yref:'paper',text:`<b>${fmtx(orNow)}</b>`,showarrow:false,
+            xanchor:'center',yanchor:'bottom',font:{size:17,color:'#111'}});
+  if(anchor>=loL-pad && anchor<=hiL+pad)
+    ann.push({x:anchor,y:1.02,yref:'paper',text:'base value',showarrow:false,
+              xanchor:'center',yanchor:'bottom',font:{size:11,color:'#888'}});
+  ann.push({x:0,y:1.3,xref:'paper',yref:'paper',xanchor:'left',showarrow:false,
+            text:`<span style="color:${UP}"><b>pushes risk higher ▶</b></span>`,font:{size:13}});
+  ann.push({x:1,y:1.3,xref:'paper',yref:'paper',xanchor:'right',showarrow:false,
+            text:`<span style="color:${DOWN}"><b>◀ pushes risk lower</b></span>`,font:{size:13}});
+  Plotly.react('bar', traces, {
+    height:200,bargap:.55,barmode:'overlay',annotations:ann,font:{family:PLOT_FONT},
+    margin:{l:12,r:12,t:60,b:38},plot_bgcolor:'#fff',paper_bgcolor:'#fff',
+    xaxis:{range:[loL-pad,hiL+pad],tickvals:ticks,ticktext:tt,showgrid:false,zeroline:false,
+           ticks:'outside',showline:true,linecolor:'#333',tickfont:{size:12},
+           title:{text:'odds versus a typical birth (log scale)',font:{size:12.5}}},
+    yaxis:{showticklabels:false,showgrid:false,zeroline:false}}, {displayModeBar:false});
+  document.getElementById('barcap').innerHTML =
+    `Each block’s width is that feature’s impact. Red blocks stack from the ` +
+    `base value up to <b>${fmtx(orNow)}</b>; blue ones carry on past it, so the ` +
+    `boundary between the colours is the odds ratio.`;
+  drawChips(segs, anchor, orNow, atNow);
+}
+
+function drawChips(segs, anchor, orNow, atNow){
+  const box=document.getElementById('chips'); box.innerHTML='';
+  const add=(mult,name,sub,cls)=>{
+    const d=document.createElement('div'); d.className='chipbox';
+    d.innerHTML=`<span class="chip ${cls}">${mult.toFixed(2)}</span><small><b>${name}</b><br>${sub}</small>`;
+    box.appendChild(d);
+    const x=document.createElement('div'); x.style.cssText='color:#9e9e9e;font-size:22px'; x.textContent='×';
+    box.appendChild(x);
+  };
+  if(Math.abs(anchor)>1e-9) add(Math.exp(anchor),'Base value','typical birth in this population','dn');
+  segs.slice().sort((a,b)=>Math.abs(a.phi)-Math.abs(b.phi))
+      .forEach(s=>add(Math.exp(s.phi), s.name, s.sub, s.phi>0?'':'dn'));
+  box.lastChild.textContent='=';
+  const d=document.createElement('div'); d.className='chipbox';
+  d.innerHTML=`<span class="chip tot">${orNow.toFixed(2)}</span><small><b>Odds ratio ${atNow}</b><br>for cord pH &lt; 7.20</small>`;
+  box.appendChild(d);
+}
+
+function bandStack(P, base){
+  const T=P[0].length, G=P.length;
+  const lo=[], hi=[], s=[];
+  for(let t=0;t<T;t++){
+    let tot=0, neg=0;
+    for(let j=0;j<G;j++){ tot+=P[j][t]; if(P[j][t]<0) neg+=P[j][t]; }
+    s.push(tot+base);
+    let up=neg+base, dn=tot+base;
+    lo.push([]); hi.push([]);
+    for(let j=0;j<G;j++){
+      const v=P[j][t];
+      if(v>0){ lo[t].push(up); hi[t].push(up+v); up+=v; }
+      else if(v<0){ lo[t].push(dn); hi[t].push(dn-v); dn-=v; }
+      else { lo[t].push(s[t]); hi[t].push(s[t]); }
+    }
+  }
+  return {lo,hi,s};
+}
+
+function drawFig(s){
+  const x = REC.tbd_min.map(v=>-v);
+  const G = REC.groups;
+  const P = G.map(g=>REC.phi_group[g].map(v=>v==null?0:v));
+  const anchorBase = s[0]-REC.log_or[0];
+  const st = bandStack(P, anchorBase);
+  const traces=[];
+  const n = NOW+1;
+  G.forEach((g,j)=>{
+    traces.push({x:x.slice(0,n).concat(x.slice(0,n).slice().reverse()),
+      y:st.lo.slice(0,n).map(r=>r[j]).concat(st.hi.slice(0,n).map(r=>r[j]).reverse()),
+      fill:'toself',fillcolor:FAM[g]||FAM.Other,line:{width:0},opacity:.85,
+      name:g,hoverinfo:'skip',type:'scatter',mode:'lines',xaxis:'x',yaxis:'y'});
+  });
+  traces.push({x:x.slice(0,n),y:s.slice(0,n),mode:'lines',line:{color:'#fff',width:6.5},
+               showlegend:false,hoverinfo:'skip',xaxis:'x',yaxis:'y',type:'scatter'});
+  traces.push({x:x.slice(0,n),y:s.slice(0,n),mode:'lines',name:'Odds ratio',
+    line:{color:'#111',width:3.2},type:'scatter',xaxis:'x',yaxis:'y',
+    customdata:s.slice(0,n).map(v=>Math.exp(v)),
+    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b><extra></extra>'});
+  traces.push({x:[x[NOW]],y:[s[NOW]],mode:'markers',showlegend:false,type:'scatter',
+    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(s[NOW])>1?UP:DOWN,
+    line:{color:'#fff',width:2.5}},hoverinfo:'skip'});
+
+  const rows = REC.strip ? 3 : 1;
+  if(REC.strip){
+    traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:FHRC,width:1},
+                 name:'FHR',type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:false,
+                 hovertemplate:'%{y:.0f} bpm<extra></extra>'});
+    traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:FAM['Uterine activity'],width:1},
+                 name:'UC',type:'scatter',xaxis:'x3',yaxis:'y3',showlegend:false,
+                 hovertemplate:'%{y:.0f}<extra></extra>'});
+  }
+  const shapes=[];
+  [[30,'dash'],[60,'dot']].forEach(([d,dash])=>{
+    for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW]-d,x1:x[NOW]-d,
+      yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
+      xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#151515',width:1.2,dash:dash}});
+  });
+  if(REC.events) REC.events.forEach(e=>{
+    const col = EVC[e.k] || '#bbb';
+    shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                 fillcolor:col,opacity:.16,line:{width:0},layer:'below'});
+  });
+
+  const lay = {
+    height: rows===3?640:380, margin:{l:52,r:14,t:44,b:40},
+    font:{size:14,family:PLOT_FONT}, hovermode:'x unified', shapes:shapes,
+    legend:{orientation:'h',y:1.02,yanchor:'bottom',x:0,font:{size:12}},
+    plot_bgcolor:'#fff', paper_bgcolor:'#fff',
+    xaxis :{domain:[0,1], anchor:'y',  showgrid:true, gridcolor:'#eee',
+            title:{text: rows===3?'':'minutes before delivery'}},
+    yaxis :{domain: rows===3?[0.52,1]:[0,1], anchor:'x', title:{text:'odds / typical'},
+            showgrid:true, gridcolor:'#eee',
+            tickvals:[-2.079,-1.386,-0.693,0,0.693,1.386,2.079],
+            ticktext:['0.125','0.25','0.5','1','2','4','8']}
+  };
+  if(rows===3){
+    lay.xaxis2={domain:[0,1],anchor:'y2',matches:'x',showgrid:true,gridcolor:'#eee',showticklabels:false};
+    lay.yaxis2={domain:[0.24,0.48],anchor:'x2',title:{text:'FHR (bpm)'},range:[50,210],
+                showgrid:true,gridcolor:'#eee'};
+    lay.xaxis3={domain:[0,1],anchor:'y3',matches:'x',showgrid:true,gridcolor:'#eee',
+                title:{text:'minutes before delivery'}};
+    lay.yaxis3={domain:[0,0.20],anchor:'x3',title:{text:'UC'},showgrid:true,gridcolor:'#eee'};
+  }
+  Plotly.react('fig', traces, lay, {displayModeBar:false, scrollZoom:false});
+  const gd=document.getElementById('fig');
+  gd.removeAllListeners && gd.removeAllListeners('plotly_click');
+  gd.on('plotly_click', ev=>{
+    const px = ev.points[0].x;
+    let best=0, bd=Infinity;
+    x.forEach((v,i)=>{ const d=Math.abs(v-px); if(d<bd){bd=d;best=i;} });
+    NOW=best; redraw();
+  });
+}
+
+/* Percentile as a number over a filled bar, so a column of them can be scanned
+   without reading every figure. */
+function pctCell(p){
+  if(p==null) return '';
+  const n=Math.round(p);
+  return `<div style="position:relative;min-width:64px">`
+       + `<div style="position:absolute;inset:0;background:var(--warm);border-radius:4px"></div>`
+       + `<div style="position:absolute;left:0;top:0;bottom:0;width:${n}%;`
+       + `background:var(--ink3);opacity:.35;border-radius:4px"></div>`
+       + `<span style="position:relative">${n}</span></div>`;
+}
+function fmtNum(v){
+  if(v==null || !isFinite(v)) return '';
+  return Math.abs(v)>=100 ? v.toFixed(0) : (Math.abs(v)>=1 ? v.toFixed(2) : v.toFixed(3));
+}
+
+/* The app's coloured metadata cards. Label and value sit in a two-column
+   max-content grid so the pair stays together instead of being thrown to
+   opposite edges of a stretched card. */
+function drawMeta(){
+  const box = document.getElementById('meta');
+  if(!REC.meta){ box.innerHTML=''; return; }
+  const cards = Object.entries(REC.meta).map(([g, items])=>{
+    const col = (META.meta_colors||{})[g] || '#8b8b8b';
+    const rows = items.map(([lab, val, note])=>{
+      const t = note ? ` title="${String(note).replace(/"/g,'&quot;')}"` : '';
+      return `<span style="opacity:.9"${t}>${lab}</span>`
+           + `<span style="font-weight:700;white-space:nowrap"${t}>${val}</span>`;
+    }).join('');
+    return `<div style="flex:0 1 auto;background:${col};color:#fff;`
+         + `border-radius:12px;padding:12px 14px">`
+         + `<div style="font-weight:800;font-size:17px;margin-bottom:8px">${g}</div>`
+         + `<div style="display:grid;grid-template-columns:max-content max-content;`
+         + `column-gap:18px;row-gap:2px;font-size:14px;line-height:1.7">${rows}</div></div>`;
+  }).join('');
+  box.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:stretch">${cards}</div>`;
+}
+
+function drawTable(){
+  const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
+  const idx=phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
+  let h='<table><tr><th>#</th><th>Category</th><th>Feature</th>'
+      + '<th class="wrap">What it measures</th>'
+      + '<th class="num">Value</th><th class="num">Cohort %ile</th>'
+      + '<th class="num">Cohort median</th>'
+      + '<th class="num">Multiplier</th><th class="num">log-odds φ</th></tr>';
+  idx.forEach((i,k)=>{
+    const g=META.groups[i], c=FAM[g]||FAM.Other;
+    h+=`<tr><td class="num">${k+1}</td>`
+     + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${g}</span></td>`
+     + `<td><b>${label(F[i])}</b>${unit(F[i])?` <span style="color:#9aa">(${unit(F[i])})</span>`:''}</td>`
+     + `<td class="wrap" style="color:#555">${meaning(F[i])}</td>`
+     + `<td class="num">${X[i]==null?'':X[i]}</td>`
+     + `<td class="num">${pctCell(cohortPct(X[i], META.pctgrid[F[i]]))}</td>`
+     + `<td class="num">${META.pctgrid[F[i]] ? fmtNum(META.pctgrid[F[i]][50]) : ''}</td>`
+     + `<td class="num" style="color:${phi[i]>0?UP:DOWN}">${Math.exp(phi[i]).toFixed(3)}×</td>`
+     + `<td class="num">${phi[i]>0?'+':''}${phi[i].toFixed(4)}</td></tr>`;
+  });
+  document.getElementById('tbl').innerHTML = h+'</table>';
+}
+
+boot();
+</script>
+</body>
+</html>
