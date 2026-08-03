@@ -101,11 +101,11 @@
     </div>
     <input type="search" id="idfilter" placeholder="Filter by record id…">
     <select id="sort">
-      <option value="id">Record id</option>
+      <option value="hi" selected>Odds ratio: high → low</option>
+      <option value="lo">Odds ratio: low → high</option>
       <option value="phlo">Cord pH: low → high</option>
       <option value="phhi">Cord pH: high → low</option>
-      <option value="hi">Odds ratio: high → low</option>
-      <option value="lo">Odds ratio: low → high</option>
+      <option value="id">Record id</option>
     </select>
     <div id="picker"></div>
     <p class="cap" id="pickcap"></p>
@@ -202,6 +202,29 @@ function pctLabel(p){
   const n=Math.round(p);
   const suf = (n%100>=10 && n%100<=20) ? 'th' : ({1:'st',2:'nd',3:'rd'}[n%10] || 'th');
   return `${n}${suf} pct`;
+}
+/* The percentile as a table cell: the number, plus a bar so a column of them
+   can be scanned without reading. Coloured by DISTANCE from the middle, not by
+   direction -- an extreme value is notable either way, and which way is
+   concerning depends on the feature. */
+/* Compact number formatting for the table: keep three significant figures
+   without printing 0.0000000001 or 123456.789. */
+function fmtNum(v){
+  if(v==null || !isFinite(v)) return '';
+  const a = Math.abs(v);
+  if(a===0) return '0';
+  if(a>=1000 || a<0.01) return v.toPrecision(3);
+  return String(+v.toPrecision(3));
+}
+function pctCell(p){
+  if(p==null || !isFinite(p)) return '<span style="color:var(--mut)">—</span>';
+  const n = Math.round(p);
+  const extreme = Math.abs(n-50)/50;                 /* 0 middling .. 1 extreme */
+  const col = extreme>0.8 ? UP : (extreme>0.5 ? '#f4832f' : 'var(--mut)');
+  return `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">`
+       + `<span style="color:${col};font-weight:${extreme>0.5?700:400}">${pctLabel(p)}</span>`
+       + `<span style="display:inline-block;width:34px;height:6px;border-radius:3px;`
+       + `background:linear-gradient(to right, ${col} ${n}%, var(--line) ${n}%)"></span></span>`;
 }
 function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
 function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
