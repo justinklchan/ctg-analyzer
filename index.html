@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CTG explained risk</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="logo.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -386,50 +389,92 @@ function drawFig(s){
   const anchorBase = s[0]-REC.log_or[0];
   const st = bandStack(P, anchorBase);
   const traces=[];
-  const n = NOW+1;
+  /* The WHOLE curve is drawn, always. Truncating it at the cursor made every
+     click look like the chart was collapsing; the cursor marks a moment, it
+     does not decide how much of the recording exists. */
   G.forEach((g,j)=>{
-    traces.push({x:x.slice(0,n).concat(x.slice(0,n).slice().reverse()),
-      y:st.lo.slice(0,n).map(r=>r[j]).concat(st.hi.slice(0,n).map(r=>r[j]).reverse()),
+    traces.push({x:x.concat(x.slice().reverse()),
+      y:st.lo.map(r=>r[j]).concat(st.hi.map(r=>r[j]).reverse()),
       fill:'toself',fillcolor:FAM[g]||FAM.Other,line:{width:0},opacity:.85,
       name:g,hoverinfo:'skip',type:'scatter',mode:'lines',xaxis:'x',yaxis:'y'});
   });
-  traces.push({x:x.slice(0,n),y:s.slice(0,n),mode:'lines',line:{color:'#fff',width:6.5},
+  traces.push({x:x,y:st.s,mode:'lines',line:{color:'#fff',width:6.5},
                showlegend:false,hoverinfo:'skip',xaxis:'x',yaxis:'y',type:'scatter'});
-  traces.push({x:x.slice(0,n),y:s.slice(0,n),mode:'lines',name:'Odds ratio',
+  traces.push({x:x,y:st.s,mode:'lines',name:'Odds ratio',
     line:{color:'#111',width:3.2},type:'scatter',xaxis:'x',yaxis:'y',
-    customdata:s.slice(0,n).map(v=>Math.exp(v)),
-    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b><extra></extra>'});
-  traces.push({x:[x[NOW]],y:[s[NOW]],mode:'markers',showlegend:false,type:'scatter',
-    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(s[NOW])>1?UP:DOWN,
+    customdata:st.s.map(v=>Math.exp(v)),
+    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b>'+
+                  '<br><i>click to read this minute</i><extra></extra>'});
+  traces.push({x:[x[NOW]],y:[st.s[NOW]],mode:'markers',showlegend:false,type:'scatter',
+    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(st.s[NOW])>1?UP:DOWN,
     line:{color:'#fff',width:2.5}},hoverinfo:'skip'});
 
   const rows = REC.strip ? 3 : 1;
+  const shapes=[];
   if(REC.strip){
-    traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:FHRC,width:1},
+    traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:'#ff2d6f',width:1},
                  name:'FHR',type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:false,
                  hovertemplate:'%{y:.0f} bpm<extra></extra>'});
-    traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:FAM['Uterine activity'],width:1},
+    if(REC.strip.base)
+      traces.push({x:REC.strip.x,y:REC.strip.base,mode:'lines',
+        line:{color:'#111',width:1.4,dash:'dash'},name:'baseline (causal)',
+        type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,hoverinfo:'skip'});
+    traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:'#2f7fd0',width:1},
                  name:'UC',type:'scatter',xaxis:'x3',yaxis:'y3',showlegend:false,
                  hovertemplate:'%{y:.0f}<extra></extra>'});
+
+    /* Events, shaded where they happened and coloured by TYPE. Contractions
+       are drawn on the UC panel where they were measured and faintly on the
+       FHR panel so a deceleration can be read against the contraction that
+       may have caused it. */
+    (REC.events||[]).forEach(e=>{
+      const col = EVC[e.d] || '#bbb';
+      if(e.k==='contraction'){
+        shapes.push({type:'rect',xref:'x3',yref:'y3 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                     fillcolor:col,opacity:.22,line:{width:0},layer:'below'});
+        shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                     fillcolor:col,opacity:.08,line:{width:0},layer:'below'});
+      } else {
+        shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                     fillcolor:col,opacity:.26,line:{width:0},layer:'below'});
+      }
+    });
+
+    /* Shapes cannot carry hover, so each event also gets a marker that can.
+       Grouped by type so the legend doubles as the key. */
+    const byType = {};
+    (REC.events||[]).forEach(e=>{ (byType[e.d] = byType[e.d] || []).push(e); });
+    Object.entries(byType).forEach(([t,evs])=>{
+      const uc = t==='contraction';
+      traces.push({
+        x:evs.map(e=>(e.a+e.b)/2),
+        y:evs.map(()=> uc ? 0 : 200),
+        mode:'markers', type:'scatter', name:t,
+        xaxis: uc?'x3':'x2', yaxis: uc?'y3':'y2',
+        marker:{size:9,symbol:uc?'triangle-up':'triangle-down',
+                color:EVC[t]||'#bbb',line:{color:'#fff',width:1}},
+        customdata:evs.map(e=>[t,(e.b-e.a)*60,-e.b,-e.a,ETIO[t]||'']),
+        hovertemplate:'<b>%{customdata[0]}</b><br>'+
+          '%{customdata[2]:.1f} → %{customdata[3]:.1f} min before delivery<br>'+
+          '%{customdata[1]:.0f} s<br><i>%{customdata[4]}</i><extra></extra>'});
+    });
   }
-  const shapes=[];
+
   [[30,'dash'],[60,'dot']].forEach(([d,dash])=>{
     for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW]-d,x1:x[NOW]-d,
       yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
       xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#151515',width:1.2,dash:dash}});
   });
-  if(REC.events) REC.events.forEach(e=>{
-    const col = EVC[e.k] || '#bbb';
-    shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
-                 fillcolor:col,opacity:.16,line:{width:0},layer:'below'});
-  });
+  for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW],x1:x[NOW],
+    yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
+    xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#111',width:1.6}});
 
   const lay = {
-    height: rows===3?640:380, margin:{l:52,r:14,t:44,b:40},
-    font:{size:14,family:PLOT_FONT}, hovermode:'x unified', shapes:shapes,
+    height: rows===3?680:380, margin:{l:56,r:14,t:44,b:40},
+    font:{size:14,family:PLOT_FONT}, hovermode:'closest', shapes:shapes,
     legend:{orientation:'h',y:1.02,yanchor:'bottom',x:0,font:{size:12}},
     plot_bgcolor:'#fff', paper_bgcolor:'#fff',
-    xaxis :{domain:[0,1], anchor:'y',  showgrid:true, gridcolor:'#eee',
+    xaxis :{domain:[0,1], anchor:'y', showgrid:true, gridcolor:'#eee',
             title:{text: rows===3?'':'minutes before delivery'}},
     yaxis :{domain: rows===3?[0.52,1]:[0,1], anchor:'x', title:{text:'odds / typical'},
             showgrid:true, gridcolor:'#eee',
@@ -453,44 +498,6 @@ function drawFig(s){
     x.forEach((v,i)=>{ const d=Math.abs(v-px); if(d<bd){bd=d;best=i;} });
     NOW=best; redraw();
   });
-}
-
-/* Percentile as a number over a filled bar, so a column of them can be scanned
-   without reading every figure. */
-function pctCell(p){
-  if(p==null) return '';
-  const n=Math.round(p);
-  return `<div style="position:relative;min-width:64px">`
-       + `<div style="position:absolute;inset:0;background:var(--warm);border-radius:4px"></div>`
-       + `<div style="position:absolute;left:0;top:0;bottom:0;width:${n}%;`
-       + `background:var(--ink3);opacity:.35;border-radius:4px"></div>`
-       + `<span style="position:relative">${n}</span></div>`;
-}
-function fmtNum(v){
-  if(v==null || !isFinite(v)) return '';
-  return Math.abs(v)>=100 ? v.toFixed(0) : (Math.abs(v)>=1 ? v.toFixed(2) : v.toFixed(3));
-}
-
-/* The app's coloured metadata cards. Label and value sit in a two-column
-   max-content grid so the pair stays together instead of being thrown to
-   opposite edges of a stretched card. */
-function drawMeta(){
-  const box = document.getElementById('meta');
-  if(!REC.meta){ box.innerHTML=''; return; }
-  const cards = Object.entries(REC.meta).map(([g, items])=>{
-    const col = (META.meta_colors||{})[g] || '#8b8b8b';
-    const rows = items.map(([lab, val, note])=>{
-      const t = note ? ` title="${String(note).replace(/"/g,'&quot;')}"` : '';
-      return `<span style="opacity:.9"${t}>${lab}</span>`
-           + `<span style="font-weight:700;white-space:nowrap"${t}>${val}</span>`;
-    }).join('');
-    return `<div style="flex:0 1 auto;background:${col};color:#fff;`
-         + `border-radius:12px;padding:12px 14px">`
-         + `<div style="font-weight:800;font-size:17px;margin-bottom:8px">${g}</div>`
-         + `<div style="display:grid;grid-template-columns:max-content max-content;`
-         + `column-gap:18px;row-gap:2px;font-size:14px;line-height:1.7">${rows}</div></div>`;
-  }).join('');
-  box.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:stretch">${cards}</div>`;
 }
 
 function drawTable(){
