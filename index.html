@@ -180,7 +180,9 @@
      while the button is still down. */
   #fig .nsewdrag,#fig .drag{cursor:grab}
   body.panning,body.panning #fig .nsewdrag,body.panning #fig .drag{cursor:grabbing}
-  body.panning{user-select:none}
+  body.ondot,body.ondot #fig .nsewdrag,body.ondot #fig .drag{cursor:grab}
+  body.scrubbing,body.scrubbing #fig .nsewdrag,body.scrubbing #fig .drag{cursor:grabbing}
+  body.panning,body.scrubbing{user-select:none}
   #winpills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
   #winpills .pill{font-size:13px;padding:5px 12px}
   #winpills .pill .n{opacity:.6;font-weight:400;margin-left:5px}
@@ -476,6 +478,15 @@ const GUIDE='#151515', SECOND='#7b52c4';
 /* Plotly does not inherit the page font, so the charts have to be told. */
 const PLOT_FONT='Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
 let META=null, REC=null, NOW=0, BASE_LO=0, LOGOR=[];
+/* The figure's x positions, in minutes before delivery. Lifted out of the
+   render so the drag handlers -- which live on the document, not on the
+   figure -- can turn a pixel into a minute without the render's scope. */
+let XS=[];
+/* The cursor dot's data position, published by the render for the hit test in
+   overDot(). The odds axis is a linear axis holding LOG odds -- its ticks are
+   relabelled 0.25x/0.5x/1x -- so `y` is a log-odds value and converts to a
+   pixel with a plain c2p, no log handling. */
+let DOT = null;
 /* The stretch of time the user has zoomed to, as [lo,hi] in minutes before
    delivery. Held outside drawFig so that moving the cursor never moves the
    axis, and so a zoom survives the redraw the next cursor move triggers.
@@ -958,7 +969,7 @@ function figGeom(){
   const gd = document.getElementById('fig');
   const fl = gd && gd._fullLayout;
   if(!fl || !fl._size || !fl.xaxis || fl.xaxis._offset==null) return null;
-  return {gd, sz:fl._size, xa:fl.xaxis, bb:gd.getBoundingClientRect()};
+  return {gd, sz:fl._size, xa:fl.xaxis, ya:fl.yaxis, bb:gd.getBoundingClientRect()};
 }
 function inPlot(g, ev){
   const px = ev.clientX-g.bb.left, py = ev.clientY-g.bb.top;
@@ -974,22 +985,84 @@ let PAN = null;
 /* Outlives PAN on purpose: click fires after mouseup, and it is what tells a
    pan apart from a click on the curve. */
 let PANNED = false;
+let SCRUB = false, scrubPending = null;
+
+/* The minute under the pointer. `loose` ignores the plot rectangle and clamps
+   to its horizontal edges instead, which is what a drag in progress wants: the
+   pointer wanders above the panels and past the last minute, and a cursor that
+   stalls whenever it leaves the box feels broken rather than bounded. */
+function minuteAt(ev, loose){
+  const g = figGeom();
+  if(!g || !XS.length) return null;
+  let px = loose ? Math.max(g.sz.l, Math.min(g.sz.l + g.sz.w,
+                                             ev.clientX - g.bb.left))
+                 : inPlot(g, ev);
+  if(px==null) return null;
+  const dx = g.xa.p2d(px - g.xa._offset);
+  let best=0, bd=Infinity;
+  XS.forEach((v,i)=>{ const d=Math.abs(v-dx); if(d<bd){bd=d;best=i;} });
+  return best;
+}
+
+/* Coalesced to one frame, for the same reason the slider is: a redraw is two
+   Plotly.react calls plus a table rebuild, and a drag fires on every pixel. */
+function scrubTo(ev){
+  const i = minuteAt(ev, true);
+  if(i==null) return;
+  if(scrubPending!==null){ scrubPending = i; return; }
+  scrubPending = i;
+  requestAnimationFrame(()=>{ const t=scrubPending; scrubPending=null; setNow(t); });
+}
+
+/* IS THE POINTER ON THE DOT? The dot is what gets dragged; everywhere else on
+   the figure is the pan surface, so the two gestures are told apart by where
+   the press landed rather than by a modifier. Generous by a few pixels on
+   purpose -- the dot is 15px across and the thing being grabbed is small
+   enough that an exact hit test would feel like it was refusing. */
+const DOT_HIT_PX = 15;
+function overDot(ev){
+  const g = figGeom();
+  if(!g || !DOT || !g.ya || g.ya._offset==null) return false;
+  const dx = ev.clientX - g.bb.left - (g.xa._offset + g.xa.c2p(DOT.x));
+  const dy = ev.clientY - g.bb.top  - (g.ya._offset + g.ya.c2p(DOT.y));
+  return dx*dx + dy*dy <= DOT_HIT_PX*DOT_HIT_PX;
+}
+
+/* GRAB THE DOT TO MOVE IT; DRAG ANYWHERE ELSE TO PAN.
+   A press on the dot scrubs the cursor and the score follows the pointer. A
+   press anywhere else in the figure pans, as it always did, and a press that
+   does not travel still reads as a click on that minute. Making the bare drag
+   scrub everywhere took the pan away from the whole panel to serve one small
+   target; the dot is the handle, so the dot is what carries the gesture. */
 function panStart(ev){
   const g = figGeom();
   if(!g || inPlot(g, ev)==null) return;
-  const v = viewX();
-  PAN = {x0:ev.clientX, lo:v[0], hi:v[1], len:g.xa._length};
-  PANNED = false;
-  document.body.classList.add('panning');
+  if(overDot(ev)){
+    SCRUB = true;
+    document.body.classList.add('scrubbing');
+  } else {
+    const v = viewX();
+    PAN = {x0:ev.clientX, lo:v[0], hi:v[1], len:g.xa._length};
+    PANNED = false;
+    document.body.classList.add('panning');
+  }
   ev.preventDefault();                       // no text selection mid-drag
 }
 function panMove(ev){
+  if(SCRUB){ scrubTo(ev); return; }
   if(!PAN || !PAN.len) return;
   if(Math.abs(ev.clientX - PAN.x0) > 3) PANNED = true;
   const d = -(ev.clientX - PAN.x0) * (PAN.hi-PAN.lo) / PAN.len;
   applyX(PAN.lo + d, PAN.hi + d);
 }
-function panEnd(){ PAN = null; document.body.classList.remove('panning'); }
+function panEnd(){
+  PAN = null; SCRUB = false;
+  document.body.classList.remove('panning');
+  document.body.classList.remove('scrubbing');
+}
+/* Cleared on mouseup as well: a drag that ends off the figure never fires
+   mouseleave, and the grab cursor would stick until the pointer went back. */
+document.addEventListener('mouseup', ()=> document.body.classList.remove('ondot'));
 
 /* Wheel zoom, anchored under the pointer rather than on the cursor: the point
    you are pointing at is the point you mean to magnify. Scaled by the actual
@@ -1276,6 +1349,7 @@ function bandStack(P, base){
 
 function drawFig(s){
   const x = REC.tbd_min.map(v=>-v);
+  XS = x;
   const G = groupsOf();
   const P = G.map(g=>REC.phi_group[g].map(v=>v==null?0:v));
   /* Against LOGOR, not REC.log_or: with maternal history switched off the two
@@ -1326,8 +1400,16 @@ function drawFig(s){
     customdata:st.s.map(v=>Math.exp(v)),
     hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b>'+
                   '<br><i>click to read this minute</i><extra></extra>'});
+  DOT = {x:x[NOW], y:st.s[NOW]};
   traces.push({x:[x[NOW]],y:[st.s[NOW]],mode:'markers',showlegend:false,type:'scatter',
-    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(st.s[NOW])>1?UP:DOWN,
+    /* ALWAYS RED. This dot marks WHERE THE READER IS on the risk curve, not
+       whether the risk under it is good news. Colouring it green below 1.0x
+       made the score read as reassuring at the exact moment it was being
+       inspected, and put a green dot at the end of a curve whose total chip is
+       red -- two colours for one number. Direction is already carried by the
+       bands, the chips and the hatching; the cursor carries position only,
+       which is why setNow has called it "the red dot" since it was written. */
+    xaxis:'x',yaxis:'y',marker:{size:15,color:UP,
     line:{color:'#fff',width:2.5}},hoverinfo:'skip'});
 
   const rows = REC.strip ? 3 : 1;
@@ -1612,19 +1694,22 @@ function drawFig(s){
   gd.onclick = ev=>{
     /* A drag is a pan, not a cursor move -- the click event fires on mouseup
        either way, so the two have to be told apart by how far the pointer
-       travelled. */
-    if(PANNED) return;
-    const g = figGeom();
-    if(!g) return;
-    const px = inPlot(g, ev);
+       travelled. A scrub ends here too, and must not be re-read: the pointer
+       has already placed the cursor on every frame of the drag. */
+    if(PANNED || SCRUB) return;
+    const i = minuteAt(ev, false);
     /* Outside the plotting rectangle is the legend, the axis titles and the
        margins -- clicking those should not move anything. */
-    if(px==null) return;
-    const dx = g.xa.p2d(px - g.xa._offset);
-    let best=0, bd=Infinity;
-    x.forEach((v,i)=>{ const d=Math.abs(v-dx); if(d<bd){bd=d;best=i;} });
-    setNow(best);
+    if(i!=null) setNow(i);
   };
+  /* The dot is the only draggable thing on the figure, so it is the only thing
+     that may claim a grab cursor. Toggled on hover rather than baked into the
+     trace because Plotly redraws the marker on every cursor move. */
+  gd.onmousemove = ev=>{
+    if(PAN || SCRUB) return;                 // a gesture already owns the cursor
+    document.body.classList.toggle('ondot', overDot(ev));
+  };
+  gd.onmouseleave = ()=> document.body.classList.remove('ondot');
   /* Plotly no longer initiates any range change of its own, so the only thing
      left to catch is a double-click reset -- which autoranges, and autorange
      folds the cursor guides into the extent, the bug that made the whole
