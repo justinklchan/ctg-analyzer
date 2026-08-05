@@ -52,9 +52,6 @@
   .badge{font-size:14px;font-weight:700;border-radius:999px;padding:4px 13px}
   .bad{color:#c62828;background:#fdecea}
   .ok{color:#2e7d32;background:#e8f5e9}
-  /* Amber, not red: a thin toco is a caveat on the score, not a finding about
-     the baby, and it must not compete with the outcome badge beside it. */
-  .warn{color:#8a5a00;background:#fdf1d8;border:1px solid #efd9a5;cursor:help}
   /* "not measured" has to look unlike every number in the column, or it reads
      as one. Italic, muted, and dashed-underlined so it invites the tooltip. */
   .miss{color:var(--ink3);font-style:italic;
@@ -390,19 +387,6 @@ const BAND_Y = {tachycardia:[160,FHR_RANGE[1]], bradycardia:[FHR_RANGE[0],110]};
    so the two domains have to be readable from outside the layout literal that
    sets them. */
 const FHR_DOM = [0.24, 0.48], UC_DOM = [0, 0.20];
-/* Below this much toco the record gets a warning next to its outcome badge.
-   The feature builder's own floor is half of a ten-minute window; a record that
-   only just clears that across the whole labour is still one whose contraction
-   features are mostly guesswork, so the badge trips earlier than the mask. */
-const UC_COV_WARN = 0.70;
-/* The FHR panel shows its own dropout as breaks in the trace, so this bar is
-   not about what is missing -- it is about what is present but interpolated,
-   which is drawn as an unbroken line and cannot be seen at all. */
-const FHR_COV_WARN = 0.70;
-/* A baseline carried across less than this reads as an ordinary quiet stretch.
-   Past it, the flat line is long enough that a reader will take it for a
-   finding: 104 of 552 records carry an interpolated stretch this long. */
-const BASE_GAP_WARN_MIN = 10;
 
 /* Plotly wants a fillcolor with its own alpha; the palette is hex. */
 function rgba(hex, a){
@@ -410,60 +394,6 @@ function rgba(hex, a){
   const n = parseInt(h.length===3 ? h.split('').map(c=>c+c).join('') : h, 16);
   return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
 }
-/* The quality caveats on the current record, as amber badges. Returns '' when
-   the record has nothing to caveat, which is the common case.
-
-   `cov.fhr_m` / `cov.uc_m` are the measured fractions (qmask == 0) and
-   `cov.fhr` / `cov.uc` what the pipeline accepts (qmask <= 2). Record files
-   written before the split carry only the latter; falling back to it keeps
-   those readable, and the tooltip then simply has no interpolated share to
-   report rather than reporting a wrong one. */
-function qualityBadges(){
-  const c = REC.cov;
-  if(!c) return '';
-  const pct = v => Math.round(v*100);
-  const out = [];
-
-  const badge = (title, text) =>
-    `<span class="badge warn" title="${title.replace(/"/g,'&quot;')}">${text}</span>`;
-
-  [['uc', 'Toco', UC_COV_WARN,
-    'Contraction features are computed only where the toco was recording. '
-    + 'Below about half a window they are given to the model as missing rather '
-    + 'than as zero.'],
-   ['fhr', 'FHR', FHR_COV_WARN,
-    'Every FHR feature on this page — the baseline, the variability, the '
-    + 'decelerations — is measured on this fraction of the trace.']
-  ].forEach(([k, lab, warn, why])=>{
-    const meas = c[k+'_m'] != null ? c[k+'_m'] : c[k];
-    if(meas == null || meas >= warn) return;
-    /* Named only when it is the difference between passing this bar and not:
-       otherwise it is a second number competing with the one that matters. */
-    const interp = (c[k+'_m'] != null && c[k] != null) ? c[k] - c[k+'_m'] : null;
-    const extra = (interp != null && interp > 0.01)
-      ? ` A further ${pct(interp)}% is interpolated, which the feature `
-        + `extractors accept and the trace draws as if it were recorded.`
-      : '';
-    out.push(badge(why + extra, `${lab} measured ${pct(meas)}% of the time`));
-  });
-
-  /* The longest single interpolated stretch, not their total: ten minutes in
-     one piece is a flat line a reader will believe, and the same ten minutes
-     spread over five gaps is not. */
-  const gaps = (REC.strip && REC.strip.base_gap) || [];
-  const longest = gaps.reduce((m,[a,b])=>Math.max(m, b-a), 0);
-  if(longest >= BASE_GAP_WARN_MIN)
-    out.push(badge(
-      'The baseline is a 10-minute moving median. Across this stretch too '
-      + 'little of the window survived the quality mask to compute one, so the '
-      + 'line is carried across from its edges — a number, not a measurement. '
-      + 'It is drawn dotted on the trace. Tachycardia and bradycardia are not '
-      + 'marked there, because those are states of the baseline itself.',
-      `Baseline interpolated for ${longest.toFixed(0)} min`));
-
-  return out.join('');
-}
-
 /* What a band says when the cursor is anywhere inside it. */
 function evLabel(e){
   return `<b>${ELAB[e.d]||e.d}</b><br>`
@@ -1111,22 +1041,18 @@ function redraw(){
   const atNow = NOW===LOGOR.length-1 ? 'at delivery'
               : `at minute ${REC.t_min[NOW]} (−${tbd.toFixed(0)} min)`;
 
-  /* THE QUALITY CAVEATS, next to the outcome badge because they qualify the
-     whole score rather than one panel of it. All three share a shape: they say
-     how much of what the page draws was actually measured.
-
-     Each reports the MEASURED fraction, not the fraction the pipeline accepts.
-     The two differ by the short and long interpolated stretches, which the
-     extractors treat as usable and which the strip draws as an unbroken line --
-     41 records clear the FHR bar and 48 the toco bar only once those are
-     counted, and a deceleration nadir invented by interpolation is an invented
-     nadir. Where the gap between the two is worth naming the tooltip names it. */
-  const covBadge = qualityBadges();
+  /* The outcome badge alone. The signal-quality caveats used to sit beside it
+     as amber chips and were taken out: three of them fired together on the
+     records that need them most, and a row of warnings next to the outcome
+     reads as an argument with it. What they said is still on the page, where
+     the reader is already looking -- the interpolated baseline draws dotted
+     over a grey band on the strip, and the coverage numbers ride on `cov` in
+     the record file. */
   document.getElementById('title').innerHTML =
     `<img src="logo.png" alt="Omega" style="height:64px;width:auto">` +
     `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
     (REC.hypoxia? 'Acidaemic — cord pH &lt; 7.20' : 'Not acidaemic — cord pH ≥ 7.20') +
-    '</span>' + covBadge;
+    '</span>';
   document.getElementById('scrublab').textContent =
     `${fmtx(orNow)} ${atNow}`;
   drawFamList();
