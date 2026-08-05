@@ -572,6 +572,56 @@ function pctCell(p){
        + `<span style="display:inline-block;width:34px;height:6px;border-radius:3px;`
        + `background:linear-gradient(to right, ${col} ${n}%, var(--line) ${n}%)"></span></span>`;
 }
+/* COHORT DISTRIBUTION, one box plot per row. Whiskers reach the true min and
+   max rather than 1.5 IQR: this is a summary of a known, complete population --
+   every scored minute of every record -- not a sample being screened for
+   outliers, so there is nothing to exclude and the far end of the whisker is a
+   value some fetus actually had.
+
+   EACH ROW IS ON ITS OWN SCALE. The box spans that feature's own min..max, so
+   widths carry no meaning ACROSS rows -- two boxes of equal width are two
+   different quantities in two different units. What the column supports is the
+   comparison WITHIN a row: where this record's dot sits against the cohort it
+   came from. That is also why the dot is the only coloured thing here, and why
+   it takes the same red/green as the Multiplier beside it.
+
+   Returns quartiles alongside the markup so the row tooltip can print the
+   numbers the picture only shows. */
+function boxCell(f, v, phi){
+  const g = META.pctgrid && META.pctgrid[f];
+  const none = {html:'<span style="color:var(--mut)">—</span>', q:null};
+  if(!g) return none;
+  const q = [0,25,50,75,100].map(k=>g[k]);
+  if(q.some(x=>x==null || !isFinite(x))) return none;
+  const [lo,q1,med,q3,hi] = q;
+  const W=132, H=18, P=6, SPAN=W-2*P, cy=H/2;
+  /* A feature that never varies -- every value identical -- has no distribution
+     to draw. Mapping it would divide by zero, so it gets a single tick. */
+  const flat = !(hi>lo);
+  const X = t => flat ? P+SPAN/2 : P + (Math.max(lo,Math.min(hi,t))-lo)/(hi-lo)*SPAN;
+  let m = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" `
+        + `style="display:block;overflow:visible" aria-hidden="true">`;
+  if(!flat){
+    m += `<line x1="${X(lo)}" x2="${X(hi)}" y1="${cy}" y2="${cy}" `
+       + `stroke="var(--ink3)" stroke-width="1"/>`;
+    [lo,hi].forEach(t=>{ m += `<line x1="${X(t)}" x2="${X(t)}" y1="${cy-3.5}" `
+       + `y2="${cy+3.5}" stroke="var(--ink3)" stroke-width="1"/>`; });
+    /* Floored at 1px: an interquartile range narrower than a pixel is still a
+       box, and a zero-width rect would vanish and read as missing data. */
+    const bw = Math.max(1, X(q3)-X(q1));
+    m += `<rect x="${X(q1)}" y="${cy-5}" width="${bw}" height="10" rx="2" `
+       + `fill="var(--warm)" stroke="var(--ink3)" stroke-width="1"/>`;
+  }
+  m += `<line x1="${X(med)}" x2="${X(med)}" y1="${cy-5.5}" y2="${cy+5.5}" `
+     + `stroke="var(--ink)" stroke-width="2"/>`;
+  /* No dot when the value was never measured: the distribution is still worth
+     showing, but there is nothing of this record's to place on it. */
+  if(v!=null && isFinite(v))
+    m += `<circle cx="${X(v)}" cy="${cy}" r="4" fill="${phi>0?UP:DOWN}" `
+       + `stroke="var(--panel)" stroke-width="1.5"/>`;
+  return {html:m+'</svg>', q:[lo,q1,med,q3,hi]};
+}
+
 function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
 function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
 function meaning(f){ const d=META.doc[f]; return d? d[2] : ''; }
@@ -958,6 +1008,49 @@ function overDot(ev){
   return dx*dx + dy*dy <= DOT_HIT_PX*DOT_HIT_PX;
 }
 
+/* Which family's band is under the pointer, or null. The risk panel is the top
+   of three that share the x axis, so the y pixel is tested against the risk
+   axis's own span rather than against inPlot's rectangle, which covers all
+   three -- otherwise pointing at the FHR trace names whichever band happens to
+   sit at that height above it. */
+function bandAt(ev){
+  const g = figGeom();
+  if(!g || !BANDS || !g.ya || g.ya._offset==null) return null;
+  if(inPlot(g, ev)==null) return null;
+  const py = ev.clientY - g.bb.top - g.ya._offset;
+  if(py < 0 || py > g.ya._length) return null;
+  const t = minuteAt(ev, false);
+  if(t==null || !BANDS.st.lo[t]) return null;
+  const yd = g.ya.p2d(py);
+  const lo = BANDS.st.lo[t], hi = BANDS.st.hi[t];
+  for(let j=0;j<BANDS.G.length;j++){
+    /* min/max rather than lo<=y<=hi: a lowering band is stacked downwards, so
+       its hi is the SMALLER number. */
+    if(yd >= Math.min(lo[j],hi[j]) && yd <= Math.max(lo[j],hi[j]) && BANDS.P[j][t]!==0)
+      return {name:BANDS.G[j], phi:BANDS.P[j][t]};
+  }
+  return null;
+}
+/* A swatch rather than colouring the name: the tip is near-black, and four of
+   the families are dark enough that their own colour on it fails contrast --
+   Signal quality is a deep indigo. The swatch reads at any luminance and is the
+   same square the legend uses. */
+function showBandTip(b, ev){
+  const tip = document.getElementById('tip');
+  const c = FAM[b.name] || FAM.Other;
+  const dir = b.phi > 0 ? 'raises risk' : 'lowers risk';
+  tip.innerHTML =
+    `<b><span style="display:inline-block;width:10px;height:10px;border-radius:2px;`
+    + `background:${c};margin-right:7px"></span>${esc(b.name)}</b>`
+    + `<div class="u">${dir} &mdash; &times;${Math.exp(b.phi).toFixed(2)} at this minute</div>`;
+  tip.classList.add('on');
+  placeTip(tip, ev);
+}
+function hideBandTip(){
+  const tip = document.getElementById('tip');
+  if(tip) tip.classList.remove('on');
+}
+
 /* GRAB THE DOT TO MOVE IT; DRAG ANYWHERE ELSE TO PAN.
    A press on the dot scrubs the cursor and the score follows the pointer. A
    press anywhere else in the figure pans, as it always did, and a press that
@@ -1254,6 +1347,12 @@ function drawChips(segs, anchor, orNow, atNow){
   bindTips(box, '[data-pool]', (tip, el)=>{ tip.innerHTML = el.dataset.pool; });
 }
 
+/* The stack as drawn, kept for hit-testing. Plotly's own hoveron:'fills' does
+   name a band, but it parks the label at the polygon's CENTROID -- for a band
+   that runs the width of the recording that is halfway across the chart, nowhere
+   near the pointer, and the reader cannot tell which of six slivers it belongs
+   to. So the bands stay hoverinfo:'skip' and the tip is placed here instead. */
+let BANDS = null;
 function bandStack(P, base){
   const T=P[0].length, G=P.length;
   const lo=[], hi=[], s=[];
@@ -1283,6 +1382,7 @@ function drawFig(s){
      here would put the bands back where the removed group had them. */
   const anchorBase = s[0]-LOGOR[0];
   const st = bandStack(P, anchorBase);
+  BANDS = {G, st, P};
   const traces=[];
   /* The WHOLE curve is drawn, always. Truncating it at the cursor made every
      click look like the chart was collapsing; the cursor marks a moment, it
@@ -1303,6 +1403,14 @@ function drawFig(s){
   G.forEach((g,j)=>{
     const c = FAM[g]||FAM.Other;
     const lo = st.lo.map(r=>r[j]), hi = st.hi.map(r=>r[j]);
+  /* Hovering a band names its family. The colours are the one part of this
+     chart with no label on them -- the legend is a row of ten swatches above a
+     stack that can be six bands deep, and matching a sliver back to its swatch
+     by eye is exactly the step a reader should not have to do. hoveron:'fills'
+     rather than a point hover because a band is an AREA: the reader is pointing
+     at a region of colour, not at one of the 2N vertices of its outline.
+     Direction rides along, since the hatch that carries it is easy to miss on a
+     thin band. */
     const band = (keep, extra) => Object.assign({
       x:x.concat(x.slice().reverse()),
       y:lo.concat(hi.map((v,t)=> keep(P[j][t]) ? v : lo[t]).reverse()),
@@ -1632,10 +1740,19 @@ function drawFig(s){
      that may claim a grab cursor. Toggled on hover rather than baked into the
      trace because Plotly redraws the marker on every cursor move. */
   gd.onmousemove = ev=>{
-    if(PAN || SCRUB) return;                 // a gesture already owns the cursor
-    document.body.classList.toggle('ondot', overDot(ev));
+    if(PAN || SCRUB){ hideBandTip(); return; }   // a gesture already owns the cursor
+    const onDot = overDot(ev);
+    document.body.classList.toggle('ondot', onDot);
+    /* The dot wins. It is the one thing here that can be grabbed, and naming
+       the band under it would offer a read on the very pixel that is offering
+       a drag. */
+    const b = onDot ? null : bandAt(ev);
+    if(b) showBandTip(b, ev); else hideBandTip();
   };
-  gd.onmouseleave = ()=> document.body.classList.remove('ondot');
+  gd.onmouseleave = ()=>{
+    document.body.classList.remove('ondot');
+    hideBandTip();
+  };
   /* Plotly no longer initiates any range change of its own, so the only thing
      left to catch is a double-click reset -- which autoranges, and autorange
      folds the cursor guides into the extent, the bug that made the whole
@@ -1661,6 +1778,9 @@ const TCOLS = [
   {key:'val',   head:'Value',          num:true},
   {key:'pct',   head:'Cohort %ile',    num:true},
   {key:'med',   head:'Cohort median',  num:true},
+  /* Not sortable: a box plot has no single value to order rows by, and a
+     sortable header on it would promise one. */
+  {key:'dist',  head:'Cohort distribution', num:false, plain:true},
   {key:'mult',  head:'Multiplier',     num:true},
   {key:'phi',   head:'log-odds φ',     num:true},
 ];
@@ -1688,7 +1808,7 @@ function tableRows(){
   /* Dropped outright rather than shown with a zero contribution: a row reading
      0.000× would look like a finding about this record instead of a setting. */
   let rows = phi.map((v,i)=>({
-    i, cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
+    i, f: F[i], cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
     mean: meaning(F[i]), val: X[i], win: win(F[i]), winr: winRank(win(F[i])),
     pct: cohortPct(X[i], META.pctgrid[F[i]]),
     med: META.pctgrid[F[i]] ? META.pctgrid[F[i]][50] : null,
@@ -1757,14 +1877,20 @@ function drawTable(){
     const arrow = on ? (TSORT.dir>0 ? ' ▲' : ' ▼') : '';
     /* `num` decides how the column sorts; `left` overrides how it is aligned,
        for the one column that sorts on a hidden numeric rank but shows text. */
+    if(c.plain) return `<th title="Whiskers span the cohort minimum and maximum, `
+         + `the box the 25th to 75th percentile, the heavy line the median. `
+         + `This record's value is the dot. Each row is scaled to its own `
+         + `feature, so widths are not comparable between rows.">${c.head}</th>`;
     return `<th class="${c.num&&!c.left?'num':''}${c.wrap?' wrap':''} sortable`
          + `${on?' on':''}" onclick="sortTable('${c.key}')">${c.head}${arrow}</th>`;
   }).join('');
   let h = `<table><tr>${head}</tr>`;
   rows.forEach(r=>{
     const c = FAM[r.cat]||FAM.Other;
+    const bx = boxCell(r.f, r.val, r.phi);
     h+=`<tr data-feat="${esc(r.feat)}" data-unit="${esc(r.unit||'')}"`
-     + ` data-win="${esc(r.win)}" data-mean="${esc(r.mean||'')}">`
+     + ` data-win="${esc(r.win)}" data-mean="${esc(r.mean||'')}"`
+     + ` data-q="${bx.q ? esc(bx.q.map(fmtNum).join('|')) : ''}">`
      + `<td class="num">${r.rank}</td>`
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
      + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
@@ -1776,6 +1902,7 @@ function drawTable(){
           : r.val}</td>`
      + `<td class="num">${pctCell(r.pct)}</td>`
      + `<td class="num">${fmtNum(r.med)}</td>`
+     + `<td>${bx.html}</td>`
      + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
      + `<td class="num">${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
   });
@@ -1804,6 +1931,17 @@ function fillTip(tip, d){
   if(d.mean){
     tip.appendChild(document.createElement('br'));
     tip.appendChild(document.createTextNode(d.mean));
+  }
+  /* The box plot's five numbers, spelled out. The picture answers "is this
+     record unusual"; a reader deciding anything on it wants the values. */
+  if(d.q){
+    const [lo,q1,med,q3,hi] = d.q.split('|');
+    tip.appendChild(document.createElement('br'));
+    const q = document.createElement('span');
+    q.className = 'u';
+    q.textContent = `cohort  min ${lo} · 25th ${q1} · median ${med}`
+                  + ` · 75th ${q3} · max ${hi}`;
+    tip.appendChild(q);
   }
 }
 
