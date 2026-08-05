@@ -393,6 +393,14 @@ const FHR_DOM = [0.24, 0.48], UC_DOM = [0, 0.20];
    only just clears that across the whole labour is still one whose contraction
    features are mostly guesswork, so the badge trips earlier than the mask. */
 const UC_COV_WARN = 0.70;
+/* The FHR panel shows its own dropout as breaks in the trace, so this bar is
+   not about what is missing -- it is about what is present but interpolated,
+   which is drawn as an unbroken line and cannot be seen at all. */
+const FHR_COV_WARN = 0.70;
+/* A baseline carried across less than this reads as an ordinary quiet stretch.
+   Past it, the flat line is long enough that a reader will take it for a
+   finding: 104 of 552 records carry an interpolated stretch this long. */
+const BASE_GAP_WARN_MIN = 10;
 
 /* Plotly wants a fillcolor with its own alpha; the palette is hex. */
 function rgba(hex, a){
@@ -400,6 +408,60 @@ function rgba(hex, a){
   const n = parseInt(h.length===3 ? h.split('').map(c=>c+c).join('') : h, 16);
   return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
 }
+/* The quality caveats on the current record, as amber badges. Returns '' when
+   the record has nothing to caveat, which is the common case.
+
+   `cov.fhr_m` / `cov.uc_m` are the measured fractions (qmask == 0) and
+   `cov.fhr` / `cov.uc` what the pipeline accepts (qmask <= 2). Record files
+   written before the split carry only the latter; falling back to it keeps
+   those readable, and the tooltip then simply has no interpolated share to
+   report rather than reporting a wrong one. */
+function qualityBadges(){
+  const c = REC.cov;
+  if(!c) return '';
+  const pct = v => Math.round(v*100);
+  const out = [];
+
+  const badge = (title, text) =>
+    `<span class="badge warn" title="${title.replace(/"/g,'&quot;')}">${text}</span>`;
+
+  [['uc', 'Toco', UC_COV_WARN,
+    'Contraction features are computed only where the toco was recording. '
+    + 'Below about half a window they are given to the model as missing rather '
+    + 'than as zero.'],
+   ['fhr', 'FHR', FHR_COV_WARN,
+    'Every FHR feature on this page — the baseline, the variability, the '
+    + 'decelerations — is measured on this fraction of the trace.']
+  ].forEach(([k, lab, warn, why])=>{
+    const meas = c[k+'_m'] != null ? c[k+'_m'] : c[k];
+    if(meas == null || meas >= warn) return;
+    /* Named only when it is the difference between passing this bar and not:
+       otherwise it is a second number competing with the one that matters. */
+    const interp = (c[k+'_m'] != null && c[k] != null) ? c[k] - c[k+'_m'] : null;
+    const extra = (interp != null && interp > 0.01)
+      ? ` A further ${pct(interp)}% is interpolated, which the feature `
+        + `extractors accept and the trace draws as if it were recorded.`
+      : '';
+    out.push(badge(why + extra, `${lab} measured ${pct(meas)}% of the time`));
+  });
+
+  /* The longest single interpolated stretch, not their total: ten minutes in
+     one piece is a flat line a reader will believe, and the same ten minutes
+     spread over five gaps is not. */
+  const gaps = (REC.strip && REC.strip.base_gap) || [];
+  const longest = gaps.reduce((m,[a,b])=>Math.max(m, b-a), 0);
+  if(longest >= BASE_GAP_WARN_MIN)
+    out.push(badge(
+      'The baseline is a 10-minute moving median. Across this stretch too '
+      + 'little of the window survived the quality mask to compute one, so the '
+      + 'line is carried across from its edges — a number, not a measurement. '
+      + 'It is drawn dotted on the trace. Tachycardia and bradycardia are not '
+      + 'marked there, because those are states of the baseline itself.',
+      `Baseline interpolated for ${longest.toFixed(0)} min`));
+
+  return out.join('');
+}
+
 /* What a band says when the cursor is anywhere inside it. */
 function evLabel(e){
   return `<b>${ELAB[e.d]||e.d}</b><br>`
@@ -976,17 +1038,17 @@ function redraw(){
   const atNow = NOW===LOGOR.length-1 ? 'at delivery'
               : `at minute ${REC.t_min[NOW]} (−${tbd.toFixed(0)} min)`;
 
-  /* A toco that was barely recording is the one quality problem a reader cannot
-     see for themselves: the FHR panel looks fine, the UC panel looks quiet, and
-     quiet reads as calm. It goes next to the outcome badge because it qualifies
-     the whole score, not one panel of it. */
-  const ucCov = REC.cov ? REC.cov.uc : null;
-  const covBadge = (ucCov!=null && ucCov < UC_COV_WARN)
-    ? `<span class="badge warn" title="Contraction features are computed only `
-      + `where the toco was recording. Below about half a window they are given `
-      + `to the model as missing rather than as zero.">`
-      + `Toco recorded ${Math.round(ucCov*100)}% of the time</span>`
-    : '';
+  /* THE QUALITY CAVEATS, next to the outcome badge because they qualify the
+     whole score rather than one panel of it. All three share a shape: they say
+     how much of what the page draws was actually measured.
+
+     Each reports the MEASURED fraction, not the fraction the pipeline accepts.
+     The two differ by the short and long interpolated stretches, which the
+     extractors treat as usable and which the strip draws as an unbroken line --
+     41 records clear the FHR bar and 48 the toco bar only once those are
+     counted, and a deceleration nadir invented by interpolation is an invented
+     nadir. Where the gap between the two is worth naming the tooltip names it. */
+  const covBadge = qualityBadges();
   document.getElementById('title').innerHTML =
     `<img src="logo.png" alt="Omega" style="height:64px;width:auto">` +
     `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
@@ -1176,7 +1238,15 @@ function drawChips(segs, anchor, orNow, atNow){
      as a factor invited the question of why a "typical birth" multiplies
      anything. The row therefore shows the feature terms only, and the product
      of what is displayed falls short of the total by exactly that anchor. */
-  segs.slice().sort((a,b)=>Math.abs(a.phi)-Math.abs(b.phi))
+  /* Sorted on the SIGNED contribution, so the printed numbers run upward:
+     every lowerer first, hardest first, then every raiser, and the row ends on
+     the single term that pushed the score up most -- next to the total it
+     helped produce. Sorting on |phi| instead ordered by strength while
+     ignoring direction, which alternated the colours (0.90, 0.88, 1.15, 1.16,
+     0.85 ...) and read as no order at all -- the numbers are what a reader
+     scans, and they have to move one way. It also lands each pooled chip among
+     its own kind rather than mid-run. */
+  segs.slice().sort((a,b)=>a.phi-b.phi)
       .forEach(s=>add(Math.exp(s.phi), s.name, s.sub, s.phi>0?'':'dn', s));
   box.lastChild.textContent='=';
   const d=document.createElement('div'); d.className='chipbox';
@@ -1262,12 +1332,19 @@ function drawFig(s){
 
   const rows = REC.strip ? 3 : 1;
   const shapes=[];
-  let ucRange=null;
+  let ucRange=null, gaps=[], inGap=()=>false;
   if(REC.strip){
     /* The UC panel's y range is pinned rather than autoranged so a contraction
        band can be drawn in data coordinates and still fill the panel exactly. */
     const ucv = REC.strip.uc.filter(v=>v!=null);
     ucRange = [Math.min(0, ...ucv), (ucv.length?Math.max(...ucv):100)*1.04];
+
+    /* Spans, in minutes before delivery, where the baseline is interpolated
+       rather than measured -- see baseline_gaps() in export_static_site.py.
+       Older record files predate the field, so an absent one means "no gaps
+       known", not "no gaps": the strip then draws exactly as it used to. */
+    gaps = REC.strip.base_gap || [];
+    inGap = x => x!=null && gaps.some(([a,b])=> x>=a && x<=b);
 
     /* Every detected event is a filled band drawn as a TRACE, not a shape.
        Shapes cannot carry hover, and the whole span has to answer to the
@@ -1288,18 +1365,61 @@ function drawFig(s){
         xaxis:uc?'x3':'x2', yaxis:uc?'y3':'y2'});
     });
 
+    /* WHERE THE BASELINE IS A GUESS. Drawn before the signals, in the same
+       band idiom as the events so it answers to the cursor, and in grey
+       because it is not a finding about the fetus -- it is the absence of one.
+       The band matters as much as the dotted line does: across a long dropout
+       the interpolated baseline is FLAT, and a flat line is exactly what a
+       reassuring baseline looks like. */
+    gaps.forEach(([a,b])=>{
+      traces.push({
+        x:[a,a,b,b,a], y:[FHR_RANGE[0],FHR_RANGE[1],FHR_RANGE[1],FHR_RANGE[0],FHR_RANGE[0]],
+        type:'scatter', mode:'lines', fill:'toself',
+        fillcolor:'rgba(130,128,122,.13)', line:{width:0},
+        hoveron:'fills', hoverinfo:'text',
+        text:`Baseline interpolated across ${(b-a).toFixed(0)} min<br>`
+            + `too little signal here to measure it`,
+        name:'baseline interpolated', legendgroup:'basegap', showlegend:false,
+        hoverlabel:{bgcolor:'#fff',bordercolor:'#82807a',font:{color:'#111'}},
+        xaxis:'x2', yaxis:'y2'});
+    });
+
     traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:'#ff2d6f',width:1},
                  name:'FHR',type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:false,
                  hoverinfo:'skip'});
-    if(REC.strip.base)
+    if(REC.strip.base){
       /* Not just 'Baseline': the legend already carries a Baseline entry for
          the feature family. Drawn in that family's blue and heavy enough to
          read against the FHR trace -- it is the reference every event on this
-         panel was measured from, so it should not be the faintest line on it. */
-      traces.push({x:REC.strip.x,y:REC.strip.base,mode:'lines',
-        line:{color:FAM['Baseline'],width:2.4,dash:'dash'},name:'FHR baseline',
+         panel was measured from, so it should not be the faintest line on it.
+
+         TWO TRACES, NOT ONE. The stretches where the ten-minute median had too
+         little accepted signal to be computed are carried across from whatever
+         bounded them; they are a number, not a measurement, and drawing them in
+         the same stroke as the rest tells the reader the opposite. Measured
+         reads solid, guessed reads dotted and half-strength. */
+      const bm = REC.strip.base.map((v,i)=> inGap(REC.strip.x[i]) ? null : v);
+      traces.push({x:REC.strip.x,y:bm,mode:'lines',
+        line:{color:FAM['Baseline'],width:2.4},name:'FHR baseline',
         type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,
+        connectgaps:false,
         hovertemplate:'baseline %{y:.0f} bpm<extra></extra>'});
+      if(gaps.length){
+        /* One sample of overlap at each edge, so the dotted run meets the solid
+           one instead of leaving a hairline of white between them. */
+        const bi = REC.strip.base.map((v,i)=>{
+          const x = REC.strip.x[i];
+          return (inGap(x) || inGap(REC.strip.x[i-1]) || inGap(REC.strip.x[i+1]))
+                 ? v : null;
+        });
+        traces.push({x:REC.strip.x,y:bi,mode:'lines',
+          line:{color:rgba(FAM['Baseline'],.55),width:2,dash:'dot'},
+          name:'baseline interpolated',
+          type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,
+          legendgroup:'basegap', connectgaps:false,
+          hovertemplate:'baseline %{y:.0f} bpm (interpolated)<extra></extra>'});
+      }
+    }
     traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:'#2f7fd0',width:1},
                  name:'UC',type:'scatter',xaxis:'x3',yaxis:'y3',showlegend:false,
                  hoverinfo:'skip'});
