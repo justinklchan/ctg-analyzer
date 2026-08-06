@@ -341,9 +341,10 @@ const FAM = {
   'Labour stage':'#b5651d',
   'Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
 /* The strip shows the three things a tracing is actually read by: the
-   baseline, the accelerations, and the decelerations typed against the
-   contraction that may have caused them. Contractions have their own panel and
-   do not need to be painted over the FHR as well.
+   baseline, the accelerations, and the decelerations -- typed against the
+   contraction that may have caused them where the linker could manage it, and
+   marked grey and open where it could not. Contractions have their own panel
+   and do not need to be painted over the FHR as well.
 
    A CONCERN RAMP, not a categorical scale: green reassuring, amber benign,
    orange context-dependent, red concerning. The deceleration subtypes are
@@ -352,25 +353,33 @@ const FAM = {
 const EVC = {
   acceleration: FAM['Accelerations'],
   early:'#ffd166', variable:'#f4832f', late:FAM['Decelerations'],
-  prolonged:'#76161f', contraction: FAM['Uterine activity'],
+  prolonged:'#76161f', untyped:'#9a9790', contraction: FAM['Uterine activity'],
   tachycardia:'#30566e', bradycardia:'#7da3ba'};
-/* Drawn in this order so the legend reads as the concern ramp does. */
-const EVORDER = ['acceleration','early','variable','late','prolonged',
+/* Drawn in this order so the legend reads as the concern ramp does. Untyped
+   sits past the end of the ramp rather than inside it: it is grey because no
+   position on the ramp was earned, not because it earned a low one. */
+const EVORDER = ['acceleration','early','variable','late','prolonged','untyped',
                  'tachycardia','bradycardia','contraction'];
 const ELAB = {
   acceleration:'Acceleration', early:'Early decel', variable:'Variable decel',
-  late:'Late decel', prolonged:'Prolonged decel', contraction:'Contraction',
+  late:'Late decel', prolonged:'Prolonged decel', untyped:'Untyped decel',
+  contraction:'Contraction',
   tachycardia:'Tachycardia', bradycardia:'Bradycardia'};
 /* The mechanism each pattern is thought to reflect -- the reason the typing
    matters at all, and what the hover label says. Keyed by the detector's own
-   subtype. Decelerations it could not type are not exported at all, so there
-   is no grey catch-all here any more. */
+   subtype, so the two untyped kinds give their own reason: an untyped
+   deceleration is a real drop in the heart rate whose CAUSE could not be
+   attributed, and the hover has to say which of the two ways that happened. */
 const ETIO = {
   acceleration:'Intact autonomic response — reassuring',
   early:'Head compression → vagal reflex. Benign; mirrors the contraction',
   variable:'Cord compression. Context-dependent',
   late:'Uteroplacental insufficiency — concerning',
   prolonged:'Over three minutes — sustained interruption of supply, urgent',
+  uncertain:'Real deceleration, no type — no contraction to time it against, '
+    + 'so early / late / variable could not be decided',
+  suspected_loss:'Real deceleration, no type — the nadir is inferred from the '
+    + 'edges of a signal gap rather than measured',
   contraction:'Uterine contraction',
   tachycardia:'Baseline above 160 bpm for ten minutes or more',
   bradycardia:'Baseline below 110 bpm for ten minutes or more'};
@@ -1471,10 +1480,16 @@ function drawFig(s){
     (REC.events||[]).forEach(e=>{
       const uc = e.d==='contraction', col = EVC[e.d]||'#bbb';
       const [y0,y1] = uc ? ucRange : (BAND_Y[e.d] || FHR_RANGE);
+      /* An untyped deceleration is drawn as an OPEN band -- dotted outline,
+         fainter fill -- so it does not read as a fifth deceleration type
+         sitting quietly beside the four real ones. The mark says a drop was
+         found here and left unnamed. */
+      const open = e.d==='untyped';
       traces.push({
         x:[e.a,e.a,e.b,e.b,e.a], y:[y0,y1,y1,y0,y0],
         type:'scatter', mode:'lines', fill:'toself',
-        fillcolor:rgba(col, uc?.20:.26), line:{width:0},
+        fillcolor:rgba(col, uc?.20:(open?.14:.26)),
+        line:open ? {width:1.1, color:rgba(col,.7), dash:'dot'} : {width:0},
         hoveron:'fills', hoverinfo:'text', text:evLabel(e),
         name:ELAB[e.d]||e.d, legendgroup:e.d, showlegend:false,
         hoverlabel:{bgcolor:'#fff',bordercolor:col,font:{color:'#111'}},
@@ -1553,6 +1568,9 @@ function drawFig(s){
     EVORDER.filter(t=>byType[t]).forEach(t=>{
       const evs = byType[t], acc = t==='acceleration', uc = t==='contraction';
       const zone = BAND_Y[t];
+      /* Open marker for the untyped decelerations, matching their open band. */
+      const open = t==='untyped';
+      const sym = zone ? 'square' : ((acc||uc) ? 'triangle-up' : 'triangle-down');
       traces.push({
         x:evs.map(e=>(e.a+e.b)/2),
         y:evs.map(()=> uc ? ucRange[0]
@@ -1560,8 +1578,9 @@ function drawFig(s){
                           : (acc ? FHR_RANGE[1]-8 : FHR_RANGE[0]+8)),
         mode:'markers', type:'scatter', name:ELAB[t]||t, legendgroup:t,
         xaxis:uc?'x3':'x2', yaxis:uc?'y3':'y2',
-        marker:{size:9,symbol:zone?'square':((acc||uc)?'triangle-up':'triangle-down'),
-                color:EVC[t]||'#bbb',line:{color:'#fff',width:1}},
+        marker:{size:9, symbol:open ? sym+'-open' : sym,
+                color:EVC[t]||'#bbb',
+                line:open ? {color:EVC[t],width:1.6} : {color:'#fff',width:1}},
         text:evs.map(evLabel), hoverinfo:'text',
         hoverlabel:{bgcolor:'#fff',bordercolor:EVC[t]||'#bbb',
                     font:{color:'#111'}}});
