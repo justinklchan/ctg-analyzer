@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTG feature importance</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="logo.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;600;700;800&display=swap"
+      rel="stylesheet">
+<style>
+  /* The record explorer's palette and furniture, unchanged. The two pages are
+     one app and have to look like it -- this one is the same cohort seen from
+     above, not a different product. No Plotly here though: every chart on this
+     page is a ranked bar, which is a div with a width, and pulling in a
+     plotting library for that would cost more than it draws. */
+  :root{
+    --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
+    --surface:#fcfcfb; --warm:#f0efec; --panel:#ffffff; --sel:#2a78d6;
+    --ink2:#52514e; --ink3:#8a8880;
+    --maxw:1520px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--surface)}
+  select,input,button{font-family:inherit}
+  a{color:var(--sel)}
+  #wrap{display:flex;min-height:100vh}
+  #side{width:290px;flex:none;border-right:1px solid var(--line);padding:16px 14px;
+        position:sticky;top:0;height:100vh;overflow:auto;background:var(--warm)}
+  #main{flex:1;min-width:0;padding:14px 20px 40px}
+  #col{width:100%;max-width:var(--maxw);margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  h2{font-size:19px;margin:20px 0 6px}
+  h3{font-size:15px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+  h3:first-child{margin-top:0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.035)}
+  .card > h2:first-child{margin-top:0}
+  .card > .cap:last-child{margin-bottom:0}
+  .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
+  label{display:block;font-size:14px;color:var(--mut);margin:12px 0 4px}
+  select{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink)}
+  label.check{display:flex;align-items:center;gap:8px;margin:0;padding:4px 2px;
+    cursor:pointer;color:var(--ink);font-size:14px;line-height:1.3;border-radius:7px}
+  label.check:hover{background:rgba(0,0,0,.04)}
+  label.check input{margin:0;flex:none;accent-color:var(--sel);cursor:pointer}
+  label.check .sw{width:10px;height:10px;border-radius:3px;flex:none}
+  label.check.off{color:var(--ink3)}
+  label.check.off .sw{opacity:.3}
+  label.check .amt{margin-left:auto;font-size:12.5px;color:var(--mut);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  label.check.off .amt{opacity:.45}
+
+  /* The link back to the record explorer. First thing in the rail, because a
+     reader who arrived here from a record needs the way back to be obvious. */
+  .nav{display:block;padding:9px 12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--panel);color:var(--ink2);text-decoration:none;font-size:14px;
+    font-weight:600;margin-bottom:14px}
+  .nav:hover{border-color:var(--ink3);color:var(--ink)}
+
+  /* ONE ROW PER DEVICE, not a pill wrap: each carries a count, and a count is
+     the first thing that decides whether a stratum is worth looking at. 95
+     fECG records against 406 ultrasound ones is the caveat on every comparison
+     this page can draw, so it is on the control itself. */
+  .devs{display:flex;flex-direction:column;gap:5px}
+  .dev{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+    padding:8px 11px;border:1px solid var(--line);border-radius:10px;
+    background:var(--panel);color:var(--ink2);font-size:14px;font-weight:600;
+    cursor:pointer}
+  .dev:hover{border-color:var(--ink3)}
+  .dev.on{background:var(--sel);border-color:var(--sel);color:#fff}
+  .dev .n{margin-left:auto;font-weight:400;font-size:13px;opacity:.75;
+    font-variant-numeric:tabular-nums}
+  .dev:disabled{opacity:.45;cursor:default}
+
+  /* The header stats. Plain numbers with their captions under them -- what the
+     current selection actually contains, so no chart below has to be read
+     against a remembered denominator. */
+  .stats{display:flex;flex-wrap:wrap;gap:26px;margin:2px 0 4px}
+  .stat b{display:block;font-size:24px;font-weight:800;line-height:1.15;
+    font-variant-numeric:tabular-nums}
+  .stat span{font-size:13px;color:var(--mut)}
+
+  /* THE RANKED LIST. A grid rather than a table so the three parts -- the name,
+     the bar, the number -- keep the same two vertical lines on every row
+     whatever the feature is called. */
+  .frow{display:grid;grid-template-columns:minmax(210px,32ch) 1fr 128px;
+    gap:14px;align-items:center;padding:7px 6px;border-radius:9px}
+  .frow:hover{background:var(--warm)}
+  .frow.head{padding-top:0;padding-bottom:4px;font-size:12.5px;color:var(--mut);
+    font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+  .frow.head:hover{background:transparent}
+  .fname{min-width:0;display:flex;align-items:baseline;gap:7px;cursor:help}
+  .fname .sw{width:9px;height:9px;border-radius:3px;flex:none;
+    position:relative;top:-1px}
+  .fname b{font-weight:600;font-size:14.5px}
+  .fname .fam{font-size:12px;color:var(--ink3);white-space:nowrap}
+  .bars{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .brow{display:flex;align-items:center;gap:8px}
+  /* A fixed-width tag so the two device bars start on the same line as each
+     other; without it a bar's left edge moved with the length of its label. */
+  .btag{flex:none;width:0;overflow:hidden;font-size:11.5px;font-weight:700;
+    color:var(--mut);text-align:right;transition:width .12s ease}
+  body.cmp .btag{width:38px}
+  .track{position:relative;flex:1;height:15px;background:var(--warm);
+    border-radius:4px;overflow:hidden}
+  .bar{position:absolute;left:0;top:0;bottom:0;border-radius:4px;min-width:1px}
+  /* WHERE THE MIDDLE HALF OF THE RECORDS SIT, drawn over the mean. A stratum
+     mean says what the model asked of this feature on average; this says
+     whether the records agreed. Two device means that differ by less than the
+     spread inside either one are not a finding, and the eye should be able to
+     see that without doing the arithmetic. */
+  .iqr{position:absolute;top:50%;height:0;border-top:2px solid rgba(11,11,11,.45);
+    transform:translateY(-1px)}
+  .iqr::before,.iqr::after{content:'';position:absolute;top:-4px;width:1.5px;
+    height:8px;background:rgba(11,11,11,.45)}
+  .iqr::before{left:0}
+  .iqr::after{right:0}
+  .med{position:absolute;top:1px;bottom:1px;width:2px;background:rgba(11,11,11,.72)}
+  .fval{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}
+  .fval .x{display:block;font-size:12px;color:var(--ink3)}
+  .fval .d{display:block;font-size:12px;font-weight:700}
+  /* A feature the model never moved on. Kept in the list rather than dropped:
+     "the model does not use this" is a finding about the feature set, and a
+     silently shortened list cannot make it. */
+  .frow.zero .fname b,.frow.zero .fval{color:var(--ink3)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:2px 0 12px;font-size:13px;
+    color:var(--mut);align-items:center}
+  .legend .k{display:inline-flex;align-items:center;gap:6px}
+  .legend .k i{width:12px;height:12px;border-radius:3px;display:inline-block}
+  code.key{font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+           color:var(--ink3);letter-spacing:-.1px;user-select:all}
+  #tip{position:fixed;z-index:60;max-width:360px;padding:9px 12px;border-radius:10px;
+    background:#141312;color:#f7f6f3;font-size:13.5px;line-height:1.45;
+    box-shadow:0 6px 20px rgba(0,0,0,.22);pointer-events:none;
+    opacity:0;visibility:hidden;transition:opacity .12s ease}
+  #tip.on{opacity:1;visibility:visible}
+  #tip b{color:#fff}
+  #tip .u{color:#b9b6ae}
+  @media (max-width:900px){
+    #wrap{flex-direction:column}
+    #side{width:auto;height:auto;position:static;border-right:0;
+          border-bottom:1px solid var(--line)}
+    .frow{grid-template-columns:minmax(140px,22ch) 1fr 108px;gap:10px}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <a class="nav" href="index.html">&#10094; Record explorer</a>
+
+    <h3>Recording device</h3>
+    <!-- Built from the data so a stratum cannot be offered that no record is
+         in, and so the counts are the exported ones rather than remembered. -->
+    <div class="devs" id="devs"></div>
+    <label class="check" style="margin-top:9px" id="cmpwrap">
+      <input type="checkbox" id="cmp">
+      <span>Compare ultrasound vs fECG</span>
+    </label>
+    <p class="cap">
+      How the fetal heart rate was picked up: an external ultrasound Doppler
+      probe, or an electrode on the fetal scalp. The choice is not random — the
+      electrode goes on when the external trace is poor or the labour is
+      advanced — so a difference between the strata carries whatever else is
+      different about those labours.
+    </p>
+
+    <h3>Feature families</h3>
+    <div id="famlist"></div>
+    <p class="cap">
+      Unticking drops that family from the ranking and from the family totals.
+      Maternal history starts off, as it does on the record page: it is fixed
+      before the trace begins, and it is the largest thing here — parity alone
+      is twice the largest trace feature.
+      <a href="#" id="famall">Turn all on</a>
+    </p>
+
+    <label for="sort">Order</label>
+    <select id="sort">
+      <option value="imp" selected>Contribution: large → small</option>
+      <option value="diff">Difference: ultrasound − fECG</option>
+      <option value="fam">Family, then contribution</option>
+      <option value="name">Feature name</option>
+    </select>
+  </div>
+
+  <div id="main">
+   <div id="col">
+    <h1 id="title">
+      <img src="logo.png" alt="Omega" style="height:64px;width:auto">
+      Feature importance across the cohort
+    </h1>
+    <div class="stats" id="stats"></div>
+
+    <section class="card">
+      <h2>What the model leans on</h2>
+      <div class="legend" id="legend"></div>
+      <div id="feats"></div>
+      <p class="cap" id="featcap"></p>
+    </section>
+
+    <section class="card">
+      <h2>By family</h2>
+      <div id="fams"></div>
+      <p class="cap">
+        Each family's features added together. A family with many small features
+        can outweigh one with a single large one, which is the point of adding
+        them: the record page switches families on and off, not features.
+      </p>
+    </section>
+
+   </div>
+  </div>
+</div>
+
+<script>
+/* Shared with the record explorer. Kept as a literal in both pages rather than
+   exported, because a colour is a design decision about the page and not a
+   property of the model output. */
+const FAM = {
+  'FHR distribution':'#e87ba4','Baseline':'#2a78d6','Variability':'#008300',
+  'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
+  'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
+  'Labour stage':'#b5651d','Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
+const UP='#e34948', DOWN='#008300';
+/* THE TWO DEVICES, in compare mode. Colour has to carry the device there, so
+   the family swatch stays beside the feature name and the bars take these
+   instead -- two bars in one family colour would be two bars the reader cannot
+   tell apart. Chosen far apart in hue and in lightness, so the pair survives
+   both a greyscale print and the common colour deficiencies. */
+const DEVC = {us:'#2a78d6', fecg:'#d1701c'};
+/* Everything else -- one stratum at a time -- is drawn in the family colour,
+   which makes the ranking readable as a family story without a legend lookup. */
+
+let META=null, IMP=null, FEATS=[], GRP={};
+let DEV='all';            /* which stratum the single-bar view shows */
+let CMP=false;            /* ultrasound against fECG, two bars per feature */
+let SORT='imp';
+
+/* MATERNAL HISTORY STARTS OFF, as it does on the record page. Its nine inputs
+   are fixed before the trace begins, and parity alone is twice the largest
+   trace feature -- left on it takes the top of the ranking and the whole
+   horizontal scale with it, so the tracing features the page exists to compare
+   are drawn as slivers against a family no monitor can change. Ticking it back
+   on is one click, and the number beside the switch says what it is worth. */
+const DEFAULT_OFF = ['Maternal history'];
+let OFF = new Set(DEFAULT_OFF);   /* families switched off */
+
+const esc = s => String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
+function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
+function meaning(f){ const d=META.doc[f]; return d? d[2] : ''; }
+function win(f){ return (META.windows && META.windows[f]) || 'Unspecified'; }
+
+/* Three significant figures without scientific notation for ordinary sizes.
+   Same rule the record page's table uses. */
+function fmtNum(v){
+  if(v==null || !isFinite(v)) return '';
+  const a=Math.abs(v);
+  if(a===0) return '0';
+  if(a>=1000 || a<0.01) return v.toPrecision(3);
+  return String(+v.toPrecision(3));
+}
+/* The contribution as the odds multiplier it is. exp() of a mean SIZE is the
+   typical pull whichever way it went, which is what the bar is ranking. */
+const fmtx = v => '×'+Math.exp(v).toFixed(2);
+
+const recsOf = dev => IMP.records.filter(r=> dev==='all' || r.dev===dev);
+
+/* Quantile of a sorted array by linear interpolation. The record counts here
+   are in the tens to hundreds, so the interpolation matters at the small end:
+   the 33 'Both' records have no 25th value to name outright. */
+function quant(sorted, p){
+  if(!sorted.length) return null;
+  const i = (sorted.length-1)*p, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi]-sorted[lo])*(i-lo);
+}
+
+/* Per-feature summary over a set of records: the mean of their per-record mean
+   |contribution|, the quartiles of the same across records, and the mean
+   signed contribution for the direction column.
+
+   Cached per stratum, since the sort control and the family switches redraw
+   the page without changing any of it. */
+const STATCACHE = {};
+function statsFor(dev){
+  if(STATCACHE[dev]) return STATCACHE[dev];
+  const rs = recsOf(dev), n = FEATS.length;
+  const out = FEATS.map(()=>({mean:0, sgn:0, q1:0, med:0, q3:0}));
+  for(let i=0;i<n;i++){
+    const col = new Array(rs.length);
+    let sa=0, ss=0;
+    for(let k=0;k<rs.length;k++){
+      const a = rs[k].a[i], s = rs[k].s[i];
+      col[k] = a; sa += a; ss += s;
+    }
+    col.sort((x,y)=>x-y);
+    out[i] = {mean: rs.length? sa/rs.length : 0,
+              sgn:  rs.length? ss/rs.length : 0,
+              q1: quant(col,.25), med: quant(col,.5), q3: quant(col,.75)};
+  }
+  const r = {n: rs.length, feats: out,
+             wins: rs.reduce((s,r)=>s+r.n,0),
+             pos:  rs.reduce((s,r)=>s+r.y,0)};
+  STATCACHE[dev] = r;
+  return r;
+}
+
+/* Which way a feature usually pulls. A signed average smaller than a fifth of
+   the size it is drawn from is not a direction -- it is a feature that pulls
+   both ways in different records, and saying "raises" of it would be a claim
+   the number does not support. */
+function direction(mean, sgn){
+  if(!(mean>0)) return {txt:'—', col:'var(--ink3)'};
+  const r = sgn/mean;
+  if(r >  0.2) return {txt:'raises', col:UP};
+  if(r < -0.2) return {txt:'lowers', col:DOWN};
+  return {txt:'both ways', col:'var(--mut)'};
+}
+/* While comparing there are two strata and one column to say it in. Where they
+   agree the column says so; where they do not, the feature does pull both ways
+   in this cohort, which is the answer that column already has a word for. */
+function directionOf(a, b){
+  const da = direction(a.mean, a.sgn);
+  if(!b) return da;
+  const db = direction(b.mean, b.sgn);
+  return da.txt===db.txt ? da : {txt:'both ways', col:'var(--mut)'};
+}
+
+/* The features on show, in the chosen order. The rank is over the visible set:
+   unticking a family is a decision to read the ranking without it, unlike the
+   record page where the rank is a standing in the whole explanation. */
+function visible(){
+  const S = statsFor(CMP ? 'us' : DEV), T = CMP ? statsFor('fecg') : null;
+  let rows = FEATS.map((f,i)=>({
+    i, f, fam: GRP[f],
+    a: S.feats[i], b: T ? T.feats[i] : null,
+  })).filter(r=>!OFF.has(r.fam));
+  const key = r => CMP ? Math.max(r.a.mean, r.b.mean) : r.a.mean;
+  if(SORT==='imp')       rows.sort((x,y)=>key(y)-key(x));
+  else if(SORT==='diff') rows.sort((x,y)=>
+      ((y.b? y.a.mean-y.b.mean : y.a.mean)) - ((x.b? x.a.mean-x.b.mean : x.a.mean)));
+  else if(SORT==='name') rows.sort((x,y)=>label(x.f).localeCompare(label(y.f)));
+  else                   rows.sort((x,y)=> x.fam===y.fam ? key(y)-key(x)
+                                                         : x.fam.localeCompare(y.fam));
+  return rows;
+}
+
+/* One bar. `scale` is shared by every bar on the panel, so lengths compare
+   across rows -- these are all the same quantity in the same units, unlike the
+   record page's per-row box plots. The whisker is clipped to the track by the
+   scale being chosen from the largest q3 as well as the largest mean. */
+function barHTML(st, colour, scale, tag){
+  const pc = v => (100*Math.max(0, Math.min(1, v/scale))).toFixed(2)+'%';
+  let m = `<div class="brow"><span class="btag">${tag||''}</span>`
+        + `<span class="track">`
+        + `<span class="bar" style="width:${pc(st.mean)};background:${colour}"></span>`;
+  if(st.q3 > 0){
+    const l = 100*Math.max(0, Math.min(1, st.q1/scale));
+    const w = 100*Math.max(0, Math.min(1, st.q3/scale)) - l;
+    m += `<span class="iqr" style="left:${l.toFixed(2)}%;width:${Math.max(w,0).toFixed(2)}%"></span>`
+       + `<span class="med" style="left:${pc(st.med)}"></span>`;
+  }
+  return m + '</span></div>';
+}
+
+function drawFeats(){
+  const rows = visible();
+  /* The largest thing that has to fit, not the largest mean: a stratum's upper
+     quartile can sit well past its mean, and scaling to the mean alone pushed
+     those whiskers off the end of their track. */
+  let scale = 0;
+  rows.forEach(r=>{
+    scale = Math.max(scale, r.a.mean, r.a.q3 || 0);
+    if(r.b) scale = Math.max(scale, r.b.mean, r.b.q3 || 0);
+  });
+  scale = scale || 1;
+
+  let h = '<div class="frow head"><span>Feature</span>'
+        + `<span>Mean |contribution| — log odds</span>`
+        + '<span style="text-align:right">Size &amp; direction</span></div>';
+  rows.forEach(r=>{
+    const col = FAM[r.fam] || FAM.Other;
+    const d = directionOf(r.a, r.b);
+    h += `<div class="frow${r.a.mean>0?'':' zero'}" data-feat="${esc(label(r.f))}"`
+       + ` data-key="${esc(r.f)}" data-unit="${esc(unit(r.f))}"`
+       + ` data-fam="${esc(r.fam)}" data-win="${esc(win(r.f))}"`
+       + ` data-mean="${esc(meaning(r.f))}"`
+       + ` data-a="${esc(statTip(r.a))}" data-b="${r.b?esc(statTip(r.b)):''}">`
+       + `<span class="fname"><span class="sw" style="background:${col}"></span>`
+       + `<span style="min-width:0"><b>${esc(label(r.f))}</b>`
+       + `<span class="fam"> · ${esc(r.fam)}</span><br>`
+       + `<code class="key">${esc(r.f)}</code></span></span>`
+       + '<span class="bars">'
+       + barHTML(r.a, CMP ? DEVC.us : col, scale, CMP ? 'US' : '')
+       + (r.b ? barHTML(r.b, DEVC.fecg, scale, 'fECG') : '')
+       + '</span>'
+       + `<span class="fval"><span>${fmtNum(r.a.mean)}</span>`
+       + (r.b ? `<span class="x">${fmtNum(r.b.mean)} fECG</span>`
+              : `<span class="x">${fmtx(r.a.mean)}</span>`)
+       + `<span class="d" style="color:${d.col}">${d.txt}</span></span>`
+       + '</div>';
+  });
+  const box = document.getElementById('feats');
+  box.innerHTML = h;
+  bindTips(box, '.frow[data-key]', (tip,el)=>fillTip(tip, el.dataset));
+
+  const nOff = FEATS.length - rows.length;
+  const zero = rows.filter(r=>!(r.a.mean>0) && !(r.b && r.b.mean>0)).length;
+  document.getElementById('featcap').textContent =
+    `${rows.length} of ${FEATS.length} features shown`
+    + (nOff ? `, ${nOff} hidden with their family` : '')
+    + (zero ? `. ${zero} never moved the odds in this selection.` : '.');
+}
+
+function statTip(st){
+  return [st.mean, st.q1, st.med, st.q3, st.sgn].map(v=>fmtNum(v)).join('|');
+}
+
+/* Family totals. Summed, not averaged: what the record page's switches remove
+   is the whole family's contribution, so the number that answers "how much
+   would turning this off change" is the sum of its features. */
+function drawFams(){
+  const A = statsFor(CMP ? 'us' : DEV), B = CMP ? statsFor('fecg') : null;
+  const tot = {};
+  FEATS.forEach((f,i)=>{
+    const g = GRP[f];
+    if(OFF.has(g)) return;
+    const t = tot[g] = tot[g] || {a:0, b:0, n:0};
+    t.a += A.feats[i].mean;
+    if(B) t.b += B.feats[i].mean;
+    t.n++;
+  });
+  const rows = Object.entries(tot).sort((x,y)=>
+    Math.max(y[1].a, y[1].b) - Math.max(x[1].a, x[1].b));
+  const scale = rows.length ? Math.max(...rows.map(r=>Math.max(r[1].a, r[1].b))) : 1;
+  let h = '';
+  rows.forEach(([g,t])=>{
+    const col = FAM[g] || FAM.Other;
+    /* No whiskers on a family total: the quartiles that were summed are each
+       a different record's, so their sum is not a quartile of anything. */
+    const flat = v => ({mean:v, q1:0, med:0, q3:0});
+    h += `<div class="frow">`
+       + `<span class="fname"><span class="sw" style="background:${col}"></span>`
+       + `<span><b>${esc(g)}</b><span class="fam"> · ${t.n} feature${t.n===1?'':'s'}`
+       + `</span></span></span>`
+       + '<span class="bars">'
+       + barHTML(flat(t.a), CMP ? DEVC.us : col, scale || 1, CMP ? 'US' : '')
+       + (B ? barHTML(flat(t.b), DEVC.fecg, scale || 1, 'fECG') : '')
+       + '</span>'
+       + `<span class="fval"><span>${fmtNum(t.a)}</span>`
+       + (B ? `<span class="x">${fmtNum(t.b)} fECG</span>` : '')
+       + '</span></div>';
+  });
+  document.getElementById('fams').innerHTML = h
+    || '<p class="cap">Every family is switched off.</p>';
+}
+
+function drawStats(){
+  const s = CMP ? null : statsFor(DEV);
+  let items;
+  if(CMP){
+    const u = statsFor('us'), f = statsFor('fecg');
+    items = [[u.n, 'ultrasound records'], [f.n, 'fECG records'],
+             [(u.wins+f.wins).toLocaleString(), 'scored minutes'],
+             [`${u.pos}/${f.pos}`, 'acidaemic, US/fECG']];
+  } else {
+    items = [[s.n, 'records'], [s.wins.toLocaleString(), 'scored minutes'],
+             [s.pos, 'acidaemic — cord pH < 7.20'],
+             [FEATS.length, 'features in the model']];
+  }
+  document.getElementById('stats').innerHTML = items.map(([v,l])=>
+    `<span class="stat"><b>${v}</b><span>${esc(l)}</span></span>`).join('');
+}
+
+function drawLegend(){
+  const box = document.getElementById('legend');
+  if(CMP){
+    box.innerHTML =
+      `<span class="k"><i style="background:${DEVC.us}"></i>Ultrasound</span>`
+    + `<span class="k"><i style="background:${DEVC.fecg}"></i>Scalp fECG</span>`
+    + '<span class="k">Bar: mean across records · dark tick: median · '
+    + 'span: 25th–75th percentile</span>';
+  } else {
+    const fams = [...new Set(FEATS.map(f=>GRP[f]))].filter(g=>!OFF.has(g));
+    box.innerHTML = fams.map(g=>
+      `<span class="k"><i style="background:${FAM[g]||FAM.Other}"></i>${esc(g)}</span>`
+    ).join('') + '<span class="k">dark tick: median · span: 25th–75th percentile</span>';
+  }
+}
+
+/* One row per family, with what that family is worth in the current selection
+   beside it -- the same shape as the record page's switch list, so a reader
+   moving between the two pages is looking at the same control. */
+function drawFamList(){
+  const S = statsFor(CMP ? 'us' : DEV);
+  const tot = {};
+  FEATS.forEach((f,i)=>{ tot[GRP[f]] = (tot[GRP[f]]||0) + S.feats[i].mean; });
+  const box = document.getElementById('famlist');
+  box.innerHTML = Object.keys(tot).sort((a,b)=>tot[b]-tot[a]).map(g=>{
+    const on = !OFF.has(g);
+    return `<label class="check${on?'':' off'}">`
+         + `<input type="checkbox" data-g="${esc(g)}"${on?' checked':''}>`
+         + `<span class="sw" style="background:${FAM[g]||FAM.Other}"></span>`
+         + `<span>${esc(g)}</span>`
+         + `<span class="amt">${fmtNum(tot[g])}</span></label>`;
+  }).join('')
+  /* One stratum has to supply the figures beside the switches, and while
+     comparing there are two. It says which rather than quietly picking one. */
+  + (CMP ? '<p class="cap" style="margin-top:6px">Figures are the ultrasound '
+         + 'stratum.</p>' : '');
+  box.querySelectorAll('input[data-g]').forEach(b=>b.onchange=()=>{
+    if(b.checked) OFF.delete(b.dataset.g); else OFF.add(b.dataset.g);
+    redraw();
+  });
+}
+
+function drawDevs(){
+  const box = document.getElementById('devs');
+  const counts = {};
+  IMP.records.forEach(r=>{ counts[r.dev] = (counts[r.dev]||0)+1; });
+  const opts = [['all','All records']].concat(
+    IMP.devices.filter(([slug])=>counts[slug]));
+  box.innerHTML = opts.map(([slug,lab])=>{
+    const n = slug==='all' ? IMP.records.length : counts[slug];
+    /* Disabled, not hidden, while comparing: the comparison IS the two strata,
+       so a third selection would have nothing to change, and dropping the
+       control would make the mode look like a different page. */
+    const on = !CMP && DEV===slug;
+    return `<button class="dev${on?' on':''}" data-d="${esc(slug)}"${CMP?' disabled':''}>`
+         + `${esc(lab)}<span class="n">${n}</span></button>`;
+  }).join('');
+  box.querySelectorAll('.dev').forEach(b=>b.onclick=()=>{
+    DEV = b.dataset.d; redraw();
+  });
+}
+
+function redraw(){
+  document.body.classList.toggle('cmp', CMP);
+  drawDevs(); drawFamList(); drawStats(); drawLegend(); drawFeats(); drawFams();
+  /* The state in the URL, so a stratum worth showing someone can be sent as a
+     link rather than as an instruction to click three things. */
+  const q = new URLSearchParams();
+  if(CMP) q.set('cmp','1'); else if(DEV!=='all') q.set('dev', DEV);
+  if(SORT!=='imp') q.set('sort', SORT);
+  /* Written whenever the switches are not where they start, INCLUDING when
+     nothing is off: with a family off by default, an absent parameter has to
+     mean the default, so "everything on" needs a parameter of its own to say
+     so -- otherwise reloading a link with every family ticked would quietly
+     switch maternal history back off. */
+  const off = [...OFF].join('~');
+  if(off !== DEFAULT_OFF.join('~')) q.set('off', off);
+  const s = q.toString();
+  history.replaceState(null, '', s ? '?'+s : location.pathname);
+}
+
+function fillTip(tip, d){
+  tip.textContent = '';
+  const b=document.createElement('b'); b.textContent=d.feat; tip.appendChild(b);
+  if(d.unit){ const u=document.createElement('span'); u.className='u';
+    u.textContent=` (${d.unit})`; tip.appendChild(u); }
+  const w=document.createElement('span'); w.className='u';
+  w.textContent = ` · ${d.fam} · ${d.win}`; tip.appendChild(w);
+  if(d.key){
+    const k=document.createElement('code'); k.className='key'; k.textContent=d.key;
+    k.style.color='#b9b6ae';
+    tip.appendChild(document.createElement('br')); tip.appendChild(k);
+  }
+  if(d.mean){
+    tip.appendChild(document.createElement('br'));
+    tip.appendChild(document.createTextNode(d.mean));
+  }
+  const line = (name, packed)=>{
+    const [mean,q1,med,q3,sgn] = packed.split('|');
+    tip.appendChild(document.createElement('br'));
+    const s=document.createElement('span'); s.className='u';
+    s.textContent = `${name}mean ${mean} · median ${med} · 25th ${q1} · 75th ${q3}`
+                  + ` · signed mean ${sgn>=0?'+':''}${sgn}`;
+    tip.appendChild(s);
+  };
+  if(d.b){ line('ultrasound  ', d.a); line('scalp fECG  ', d.b); }
+  else   { line('', d.a); }
+}
+
+function placeTip(tip, ev){
+  const w=tip.offsetWidth, h=tip.offsetHeight, pad=12;
+  let x=ev.clientX+16, y=ev.clientY+18;
+  if(x+w+pad>innerWidth)  x=ev.clientX-w-16;
+  if(y+h+pad>innerHeight) y=ev.clientY-h-14;
+  tip.style.left=Math.max(pad,x)+'px';
+  tip.style.top =Math.max(pad,y)+'px';
+}
+function bindTips(box, sel, fill){
+  const tip=document.getElementById('tip');
+  let cur=null;
+  box.onmousemove = ev=>{
+    const el = ev.target.closest && ev.target.closest(sel);
+    if(!el){ if(cur){ cur=null; tip.classList.remove('on'); } return; }
+    if(el!==cur){ cur=el; fill(tip, el); tip.classList.add('on'); }
+    placeTip(tip, ev);
+  };
+  box.onmouseleave = ()=>{ cur=null; tip.classList.remove('on'); };
+}
+
+async function boot(){
+  /* Both files at once: neither depends on the other, and the importance table
+     is the larger of the two. */
+  const [meta, imp] = await Promise.all([
+    fetch('data/index.json').then(r=>r.json()),
+    fetch('data/importance.json').then(r=>r.json()),
+  ]);
+  META = meta; IMP = imp;
+  FEATS = IMP.feat_cols;
+  /* Keyed by NAME, not by position. The prose and the window spans come from
+     the other file, and two files rebuilt at different times would otherwise
+     line up wrongly without saying so. */
+  GRP = {};
+  FEATS.forEach((f,i)=>{ GRP[f] = IMP.groups[i]; });
+
+  const q = new URLSearchParams(location.search);
+  if(q.get('cmp')==='1') CMP = true;
+  else if(q.get('dev')) DEV = q.get('dev');
+  if(q.get('sort')) SORT = q.get('sort');
+  if(SORT==='diff') CMP = true;          /* the order only exists in that mode */
+  if(q.has('off')) OFF = new Set(q.get('off').split('~').filter(Boolean));
+
+  const cmp = document.getElementById('cmp');
+  cmp.checked = CMP;
+  cmp.onchange = ()=>{ CMP = cmp.checked; redraw(); };
+  const so = document.getElementById('sort');
+  so.value = SORT;
+  /* Ordering by the difference between the two devices is a request to see
+     them both, so it turns the comparison on rather than sorting by a
+     difference the page is not drawing. */
+  so.onchange = ()=>{
+    SORT = so.value;
+    if(SORT==='diff' && !CMP){ CMP = true; cmp.checked = true; }
+    redraw();
+  };
+  document.getElementById('famall').onclick = ev=>{
+    ev.preventDefault(); OFF.clear(); redraw();
+  };
+  redraw();
+}
+boot();
+</script>
+<div id="tip" role="tooltip" aria-hidden="true"></div>
+</body>
+</html>

@@ -242,6 +242,14 @@
     padding:16px 18px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.035)}
   .card > h2:first-child{margin-top:0}
   .card > .cap:last-child{margin-bottom:0}
+  /* The way to the other view of the same cohort. Under the title rather than
+     in the rail, because the rail's top right corner belongs to the sidebar
+     toggle and a link there would share its click target. */
+  .pagenav{margin:0 0 4px}
+  .pagenav a{display:inline-block;padding:7px 13px;border:1px solid var(--line);
+    border-radius:999px;background:var(--panel);color:var(--ink2);
+    text-decoration:none;font-size:13.5px;font-weight:600}
+  .pagenav a:hover{border-color:var(--ink3);color:var(--ink)}
   /* A table can genuinely need more room than the measure allows. It scrolls
      inside its own panel rather than pushing the page wider than everything
      else -- an overflowing table was the loudest of the mismatched widths. */
@@ -291,6 +299,11 @@
   <div id="main">
    <div id="col">
     <h1 id="title">Loading…</h1>
+    <!-- The same model seen from above: every record at once, ranked by what
+         the model asked of each feature, and splittable by how the heart rate
+         was picked up. -->
+    <p class="pagenav"><a href="importance.html">Feature importance across the
+      cohort &#10095;</a></p>
 
     <section class="card">
       <h2>Clinical metadata</h2>
