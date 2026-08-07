@@ -143,17 +143,125 @@
   #tip.on{opacity:1;visibility:visible}
   #tip b{color:#fff}
   #tip .u{color:#b9b6ae}
+  /* Shown only on narrow screens, where the family switches and the order are
+     folded away to keep the device filter -- the thing this page is for -- above
+     the first bar rather than under a screenful of controls. */
+  /* The retracted rail's bar. Off on desktop, where the rail is a rail and the
+     h1 in the content column is already the first thing read. Declared before
+     the media queries so the narrow-screen rules are the later ones and win. */
+  .mbar{display:none;align-items:center;gap:10px}
+  .mtitle{font-size:15px;font-weight:800;letter-spacing:.2px;margin:0;
+    color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mback{flex:none;width:30px;height:30px;display:flex;align-items:center;
+    justify-content:center;border:1px solid var(--line);border-radius:9px;
+    background:var(--panel);color:var(--mut);text-decoration:none;font-size:14px}
+  /* The current stratum, on the closed panel: the one piece of state a reader
+     has to know to read the bars, so it does not require opening anything. */
+  .mfilt{flex:none;margin-left:auto;display:flex;align-items:center;gap:6px;
+    max-width:52%;padding:7px 11px;border:1px solid var(--line);
+    border-radius:999px;background:var(--panel);color:var(--ink2);
+    font-size:13.5px;font-weight:600;cursor:pointer}
+  .mfilt #foldlab{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mfilt .caret{flex:none;font-size:10px;color:var(--ink3)}
+  body.filters-open .mfilt{background:var(--sel);border-color:var(--sel);color:#fff}
+  body.filters-open .mfilt .caret{color:#fff}
+
   @media (max-width:900px){
     #wrap{flex-direction:column}
     #side{width:auto;height:auto;position:static;border-right:0;
           border-bottom:1px solid var(--line)}
     .frow{grid-template-columns:minmax(140px,22ch) 1fr 108px;gap:10px}
   }
+
+  /* PHONES. The three-column row is what breaks first: its name column, its
+     bar and its numbers cannot all be honest inside 390px, and holding the grid
+     together pushed the whole document wider than the screen -- every count,
+     every family total and the right end of every bar sat off the edge with no
+     horizontal scrollbar to reach them.
+
+     So the row folds instead of shrinking: the name and its number share the
+     first line, the bar takes the full width underneath. Nothing is dropped and
+     nothing is clipped. */
+  @media (max-width:640px){
+    body{font-size:14.5px}
+    #main{padding:10px 12px 32px}
+    #side{padding:12px}
+    h1{font-size:21px;gap:9px}
+    h1 img{height:40px}
+    h2{font-size:17px}
+    .card{padding:13px 13px 15px;border-radius:13px}
+    .stats{gap:14px 20px}
+    .stat b{font-size:20px}
+    .stat span{font-size:12px}
+
+    /* One scrolling row instead of five stacked buttons: the strata are a
+       single choice, and a choice should not cost half a screen. */
+    .devs{flex-direction:row;overflow-x:auto;gap:6px;padding-bottom:2px;
+      -webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .devs::-webkit-scrollbar{display:none}
+    .dev{width:auto;flex:none;padding:7px 12px}
+    .dev .n{margin-left:6px}
+
+    /* RETRACTED BY DEFAULT, and by the absence of a class rather than by
+       anything JavaScript has to do on load: the panel is open only while the
+       body carries `filters-open`, which nothing sets until the button is
+       pressed. A phone therefore opens on the ranking even if the script is
+       still parsing, and above this breakpoint the rule does not apply at all,
+       so the desktop rail is untouched by the same markup. */
+    .mbar{display:flex}
+    .nav{display:none}          /* the chevron in the bar replaces it */
+    #side{padding:8px 12px}
+    #sidebody{display:none;padding-top:4px}
+    body.filters-open #sidebody{display:block}
+
+    .frow{grid-template-columns:1fr auto;gap:3px 10px;padding:9px 2px;
+      grid-template-areas:"name val" "bars bars"}
+    .fname{grid-area:name;align-items:flex-start}
+    .fval{grid-area:val;text-align:right;align-self:start}
+    .bars{grid-area:bars;margin-top:3px}
+    .fname b{font-size:14px}
+    .fval{font-size:13.5px}
+    .fval .x,.fval .d{display:inline;margin-left:7px;font-size:11.5px}
+    /* The column headings name three columns that no longer exist side by
+       side. What they said is in the legend under the title instead. */
+    .frow.head{display:none}
+    .track{height:13px}
+    code.key{font-size:10px}
+    /* Every row names its own family, so the key would be four lines of
+       restatement. The device key in compare mode is not restated anywhere and
+       stays. */
+    .legend .k.fam{display:none}
+  }
+
+  /* TOUCH. There is no hover, so the row tip is opened by a tap -- and a tip
+     placed at the tap point would cover the row that opened it on a screen this
+     size. It docks to the bottom instead, wide enough to read, and the next tap
+     anywhere dismisses it. */
+  @media (hover:none){
+    #tip{left:10px!important;right:10px!important;top:auto!important;
+      bottom:10px!important;max-width:none;font-size:13px}
+    .frow[data-key]{cursor:pointer}
+  }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="side">
+    <!-- MOBILE ONLY, and the whole rail retracts behind it. Stacked on a phone
+         the controls are a screenful, and a reader who opened a page called
+         feature importance should land on the ranking, not on the filters for
+         it. The button carries the current stratum, so the state the page is in
+         is readable without opening anything. The chevron keeps the way back to
+         the record explorer, which the collapsed panel would otherwise take. -->
+    <div class="mbar">
+      <a class="mback" href="index.html" aria-label="Record explorer">&#10094;</a>
+      <span class="mtitle">Feature importance</span>
+      <button class="mfilt" id="foldbtn" type="button" aria-expanded="false"
+              aria-controls="sidebody"><span id="foldlab">All records</span>
+        <span class="caret">&#9662;</span></button>
+    </div>
+
+   <div id="sidebody">
     <a class="nav" href="index.html">&#10094; Record explorer</a>
 
     <h3>Recording device</h3>
@@ -189,6 +297,7 @@
       <option value="fam">Family, then contribution</option>
       <option value="name">Feature name</option>
     </select>
+   </div>
   </div>
 
   <div id="main">
@@ -493,8 +602,11 @@ function drawLegend(){
     + 'span: 25th–75th percentile</span>';
   } else {
     const fams = [...new Set(FEATS.map(f=>GRP[f]))].filter(g=>!OFF.has(g));
+    /* The family chips carry a class of their own so a phone can drop them:
+       every row already names its family beside the feature, so on a narrow
+       screen the key is four lines restating what the list says anyway. */
     box.innerHTML = fams.map(g=>
-      `<span class="k"><i style="background:${FAM[g]||FAM.Other}"></i>${esc(g)}</span>`
+      `<span class="k fam"><i style="background:${FAM[g]||FAM.Other}"></i>${esc(g)}</span>`
     ).join('') + '<span class="k">dark tick: median · span: 25th–75th percentile</span>';
   }
 }
@@ -541,13 +653,33 @@ function drawDevs(){
          + `${esc(lab)}<span class="n">${n}</span></button>`;
   }).join('');
   box.querySelectorAll('.dev').forEach(b=>b.onclick=()=>{
-    DEV = b.dataset.d; redraw();
+    DEV = b.dataset.d;
+    /* On a phone the panel is covering the thing the choice just changed, and
+       picking a stratum is one decisive tap rather than a setting being dialled
+       in -- so it closes and shows the result. The family switches and the
+       compare box are left alone: those are worked through several at a time. */
+    if(NARROW()) document.body.classList.remove('filters-open');
+    redraw();
   });
+}
+
+/* The breakpoint, asked of the browser rather than restated as a number in two
+   places -- this has to be the same 640px the stylesheet retracts at, or the
+   panel would close on a screen where it was never covering anything. */
+const NARROW = ()=> matchMedia('(max-width:640px)').matches;
+
+/* What the closed panel says it is showing. */
+function foldLabel(){
+  if(CMP) return 'US vs fECG';
+  if(DEV==='all') return 'All records';
+  const d = (IMP.devices.find(([slug])=>slug===DEV) || [])[1];
+  return d || 'All records';
 }
 
 function redraw(){
   document.body.classList.toggle('cmp', CMP);
   drawDevs(); drawFamList(); drawStats(); drawLegend(); drawFeats(); drawFams();
+  document.getElementById('foldlab').textContent = foldLabel();
   /* The state in the URL, so a stratum worth showing someone can be sent as a
      link rather than as an instruction to click three things. */
   const q = new URLSearchParams();
@@ -600,16 +732,32 @@ function placeTip(tip, ev){
   tip.style.left=Math.max(pad,x)+'px';
   tip.style.top =Math.max(pad,y)+'px';
 }
+const TOUCH = ()=> matchMedia('(hover:none)').matches;
+
 function bindTips(box, sel, fill){
   const tip=document.getElementById('tip');
   let cur=null;
   box.onmousemove = ev=>{
+    if(TOUCH()) return;              /* a tap also fires one of these */
     const el = ev.target.closest && ev.target.closest(sel);
     if(!el){ if(cur){ cur=null; tip.classList.remove('on'); } return; }
     if(el!==cur){ cur=el; fill(tip, el); tip.classList.add('on'); }
     placeTip(tip, ev);
   };
   box.onmouseleave = ()=>{ cur=null; tip.classList.remove('on'); };
+  /* WHAT A ROW SAYS ON A PHONE. The description, the internal name and the
+     quartiles behind the bar live in this tip, so without a tap to open it a
+     touch reader can see the ranking and nothing that explains it. The tip
+     stops the event so the document handler below does not close it in the
+     same tap that opened it. */
+  box.onclick = ev=>{
+    if(!TOUCH()) return;
+    const el = ev.target.closest && ev.target.closest(sel);
+    if(!el) return;
+    fill(tip, el);
+    tip.classList.add('on');
+    ev.stopPropagation();
+  };
 }
 
 async function boot(){
@@ -650,6 +798,18 @@ async function boot(){
   document.getElementById('famall').onclick = ev=>{
     ev.preventDefault(); OFF.clear(); redraw();
   };
+  /* The narrow-screen rail. Its bar is display:none above 640px, so this costs
+     a desktop reader nothing and needs no width test of its own. */
+  const fb = document.getElementById('foldbtn');
+  fb.onclick = ()=>{
+    const open = document.body.classList.toggle('filters-open');
+    fb.querySelector('.caret').innerHTML = open ? '&#9652;' : '&#9662;';
+    fb.setAttribute('aria-expanded', String(open));
+  };
+  /* Any tap outside a row closes the tip it opened. */
+  document.addEventListener('click', ()=>{
+    if(TOUCH()) document.getElementById('tip').classList.remove('on');
+  });
   redraw();
 }
 boot();
