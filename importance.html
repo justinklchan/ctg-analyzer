@@ -67,6 +67,13 @@
      the first thing that decides whether a stratum is worth looking at. 95
      fECG records against 406 ultrasound ones is the caveat on every comparison
      this page can draw, so it is on the control itself. */
+  #srcpills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 6px}
+  #srcpills .pill{border:1px solid var(--line);background:var(--panel);
+    color:var(--ink2);border-radius:999px;padding:6px 13px;font-size:13.5px;
+    font-weight:600;cursor:pointer}
+  #srcpills .pill:hover{border-color:var(--ink3)}
+  #srcpills .pill.on{background:var(--sel);border-color:var(--sel);color:#fff}
+  #srcpills.busy{opacity:.5;pointer-events:none}
   .devs{display:flex;flex-direction:column;gap:5px}
   .dev{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
     padding:8px 11px;border:1px solid var(--line);border-radius:10px;
@@ -263,6 +270,13 @@
 
    <div id="sidebody">
     <a class="nav" href="index.html">&#10094; Record explorer</a>
+
+    <h3>Annotations</h3>
+    <div id="srcpills">
+      <button class="pill on" data-s="detector">Automated</button>
+      <button class="pill" data-s="expert">Expert</button>
+    </div>
+    <p class="cap" id="srcnote"></p>
 
     <h3>Recording device</h3>
     <!-- Built from the data so a stratum cannot be offered that no record is
@@ -760,12 +774,23 @@ function bindTips(box, sel, fill){
   };
 }
 
-async function boot(){
-  /* Both files at once: neither depends on the other, and the importance table
-     is the larger of the two. */
+/* The same two arms the record explorer switches between, and the same
+   directories -- see the SRC_DIR comment there. The ranking is a mean over
+   per-record |phi|, so it is not a re-sort of one table: the expert arm is a
+   different model over different features and every bar moves. */
+const SRC_DIR = {detector:'data', expert:'data-expert'};
+const SRC_NOTE = {
+  detector:'Events from the pipeline detector (ctg_annotate.py) — what the '
+    + 'shipped model was trained on.',
+  expert:'Events hand-marked by clinicians, and a model retrained on them. '
+    + 'Fewer records reach the scoring threshold, so the counts change too.'};
+let SRC = 'detector';
+const DATA = ()=> SRC_DIR[SRC];
+
+async function loadSource(){
   const [meta, imp] = await Promise.all([
-    fetch('data/index.json').then(r=>r.json()),
-    fetch('data/importance.json').then(r=>r.json()),
+    fetch(DATA()+'/index.json').then(r=>r.json()),
+    fetch(DATA()+'/importance.json').then(r=>r.json()),
   ]);
   META = meta; IMP = imp;
   FEATS = IMP.feat_cols;
@@ -774,6 +799,46 @@ async function boot(){
      line up wrongly without saying so. */
   GRP = {};
   FEATS.forEach((f,i)=>{ GRP[f] = IMP.groups[i]; });
+  /* A family the other arm does not have stops being referenced rather than
+     hiding a switch the reader cannot see. */
+  const fams = new Set(IMP.groups);
+  OFF.forEach(g=>{ if(!fams.has(g)) OFF.delete(g); });
+  /* An arm with fewer records can empty a stratum the other one offers, and
+     statsFor() on an empty one has nothing to average. */
+  if(DEV !== 'all' && !IMP.records.some(r=>r.dev === DEV)) DEV = 'all';
+}
+
+async function setSource(src){
+  if(src === SRC) return;
+  const pills = document.getElementById('srcpills'), prev = SRC;
+  pills.classList.add('busy');
+  try{
+    SRC = src;
+    await loadSource();
+    document.querySelectorAll('#srcpills .pill').forEach(b=>
+      b.classList.toggle('on', b.dataset.s === src));
+    document.getElementById('srcnote').textContent = SRC_NOTE[src];
+    /* redraw() rebuilds the stratum and family switches from the new counts,
+       so nothing else needs saying here. */
+    redraw();
+  }catch(err){
+    SRC = prev;
+    document.querySelectorAll('#srcpills .pill').forEach(b=>
+      b.classList.toggle('on', b.dataset.s === prev));
+    document.getElementById('srcnote').textContent =
+      'Could not load the ' + src + ' annotations — still showing ' + prev + '.';
+  }finally{
+    pills.classList.remove('busy');
+  }
+}
+
+async function boot(){
+  /* Both files at once: neither depends on the other, and the importance table
+     is the larger of the two. */
+  await loadSource();
+  document.querySelectorAll('#srcpills .pill').forEach(b=>
+    b.onclick = ()=> setSource(b.dataset.s));
+  document.getElementById('srcnote').textContent = SRC_NOTE[SRC];
 
   const q = new URLSearchParams(location.search);
   if(q.get('cmp')==='1') CMP = true;

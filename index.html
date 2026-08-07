@@ -81,6 +81,11 @@
     font-variant-numeric:tabular-nums;white-space:nowrap}
   label.check.off .amt{opacity:.45}
   #pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+  #srcpills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 6px}
+  /* Dimmed rather than disabled while a switch is in flight: every fetch on the
+     page has to be replaced, and a second click halfway through would leave the
+     record showing one arm's curve over the other arm's strip. */
+  #srcpills.busy{opacity:.5;pointer-events:none}
   .pill{border:1px solid var(--line);background:var(--panel);color:var(--ink2);
     border-radius:999px;padding:6px 13px;font-size:13.5px;font-weight:600;cursor:pointer}
   .pill:hover{border-color:var(--ink3)}
@@ -277,6 +282,13 @@
       onto what is left. <a href="#" id="famall">Turn all on</a>
     </p>
 
+    <h3>Annotations</h3>
+    <div id="srcpills">
+      <button class="pill on" data-s="detector">Automated</button>
+      <button class="pill" data-s="expert">Expert</button>
+    </div>
+    <p class="cap" id="srcnote"></p>
+
     <h3>Recording</h3>
     <div id="pills">
       <button class="pill on" data-f="all">All</button>
@@ -355,6 +367,26 @@
 </div>
 
 <script>
+/* WHICH ANNOTATION SET THE WHOLE PAGE IS BUILT ON.
+   The two arms are separate exports -- separate features, separate model,
+   separate SHAP -- so switching is not a redraw with different colours, it is a
+   reload of everything the page holds. `data/` is the algorithmic detector,
+   `data-expert/` the clinician marks; both are written by export_static_site.py
+   with --data-dir, and a missing one is what SRC_AVAIL turns off.
+
+   The detector is the default because it is what the shipped model was trained
+   on. The expert arm marks far fewer events (807 accelerations against 3093 on
+   this cohort), so the two disagree about far more than the strip: every window
+   rate, every cumulative total and every contribution moves with it. */
+const SRC_DIR = {detector:'data', expert:'data-expert'};
+const SRC_NOTE = {
+  detector:'Events from the pipeline detector (ctg_annotate.py) — what the '
+    + 'shipped model was trained on.',
+  expert:'Events hand-marked by clinicians. Fewer marks, and a model retrained '
+    + 'on them, so the score and every contribution change with the strip.'};
+let SRC = 'detector';
+const DATA = ()=> SRC_DIR[SRC];
+
 const FAM = {
   'FHR distribution':'#e87ba4','Baseline':'#2a78d6','Variability':'#008300',
   'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
@@ -728,11 +760,10 @@ async function boot(){
   document.getElementById('zoomfit').onclick = zoomFit;
   syncZoomUi();
 
-  META = await (await fetch('data/index.json')).json();
+  META = await (await fetch(DATA()+'/index.json')).json();
   /* Resolved from META rather than from the feature names, so a feature moved
      between groups in Python needs no change here. */
-  GIDX = {};
-  META.groups.forEach((g,i)=>{ (GIDX[g] = GIDX[g] || []).push(i); });
+  applyMeta();
   document.getElementById('famall').onclick = ev=>{
     ev.preventDefault();
     OFF.clear(); redraw();
@@ -750,8 +781,64 @@ async function boot(){
     document.querySelectorAll('#pills .pill').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); FILTER=b.dataset.f; fillPicker();
   });
+  document.querySelectorAll('#srcpills .pill').forEach(b=>
+    b.onclick = ()=> setSource(b.dataset.s));
+  document.getElementById('srcnote').textContent = SRC_NOTE[SRC];
+
   fillPicker();
   await load(currentList()[0].id);
+}
+
+/* Switch annotation set. The record and the reading position are kept where the
+   user left them -- the point of the toggle is to see the SAME record read two
+   ways, and dropping back to the top of the list every time would defeat that.
+   The cursor is kept only if the other arm scored that far: the two arms can
+   differ in how many minutes they score, because a window with nothing marked
+   in it is not the same as a window that was never reached. */
+async function setSource(src){
+  if(src === SRC) return;
+  const pills = document.getElementById('srcpills');
+  const wantId = REC ? REC.record_id : null, wantNow = NOW;
+  const prevSrc = SRC;
+  pills.classList.add('busy');
+  try{
+    SRC = src;
+    META = await (await fetch(DATA()+'/index.json')).json();
+    applyMeta();
+    document.querySelectorAll('#srcpills .pill').forEach(b=>
+      b.classList.toggle('on', b.dataset.s === src));
+    document.getElementById('srcnote').textContent = SRC_NOTE[src];
+    fillPicker();
+    const L = currentList();
+    const id = (wantId != null && META.records.some(r=>r.id === wantId))
+             ? wantId : (L.length ? L[0].id : null);
+    if(id != null) await load(id, wantNow);
+  }catch(err){
+    /* Put the page back on the arm that is known to load rather than leaving it
+       half-switched. A missing data-expert/ is the likely cause and it is a
+       build problem, not something the reader can act on. */
+    SRC = prevSrc;
+    document.querySelectorAll('#srcpills .pill').forEach(b=>
+      b.classList.toggle('on', b.dataset.s === prevSrc));
+    document.getElementById('srcnote').textContent =
+      'Could not load the ' + src + ' annotations — still showing '
+      + prevSrc + '. Re-run export_static_site.py --data-dir '
+      + SRC_DIR[src] + ' --events ' + src + '.';
+  }finally{
+    pills.classList.remove('busy');
+  }
+}
+
+/* Everything derived from META, in one function because the annotation toggle
+   has to redo all of it against a table whose feature list may differ: the
+   expert arm can leave a column out entirely where nothing was ever marked. */
+function applyMeta(){
+  GIDX = {};
+  META.groups.forEach((g,i)=>{ (GIDX[g] = GIDX[g] || []).push(i); });
+  /* Family switches survive the switch by NAME. A family the other arm does not
+     have simply stops being referenced; one it has that was never turned off
+     starts on, which is the same state a fresh load would give it. */
+  OFF.forEach(g=>{ if(!(g in GIDX)) OFF.delete(g); });
 }
 
 let FILTER='all';
@@ -895,10 +982,14 @@ function mark(id){
   });
 }
 
-async function load(id){
-  REC = await (await fetch(`data/rec_${id}.json`)).json();
+async function load(id, keepNow){
+  REC = await (await fetch(`${DATA()}/rec_${id}.json`)).json();
   LOGOR = curveOf();
-  NOW = LOGOR.length-1;      // opens at delivery; click the curve to move it
+  // opens at delivery; click the curve to move it. `keepNow` is the annotation
+  // toggle holding the reading position across a reload, clamped because the
+  // other arm may not score as many minutes.
+  NOW = (keepNow == null) ? LOGOR.length-1
+                          : Math.min(keepNow, LOGOR.length-1);
   ZX  = null;                // a new record starts fully zoomed out
   const sc = document.getElementById('cursor');
   sc.max = String(LOGOR.length-1);
