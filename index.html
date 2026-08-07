@@ -56,6 +56,12 @@
      as one. Italic, muted, and dashed-underlined so it invites the tooltip. */
   .miss{color:var(--ink3);font-style:italic;
     border-bottom:1px dashed var(--ink3);cursor:help}
+  /* A row whose window has not run yet. Held back rather than hidden: it is
+     still in the model's input vector and still in the rank, and dropping it
+     would leave the numbered list with gaps and no account of them. */
+  tr.immature{background:var(--warm)}
+  tr.immature td:nth-child(2) span,
+  tr.immature td:nth-child(3){opacity:.62}
   label{display:block;font-size:14px;color:var(--mut);margin:12px 0 4px}
   select,input[type=number]{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--ink)}
@@ -274,7 +280,6 @@
       <option value="id">Record id</option>
     </select>
     <div id="picker"></div>
-    <p class="cap" id="pickcap"></p>
 
   </div>
 
@@ -802,15 +807,6 @@ function callsYes(r){
 
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
-  /* A yes/no is meaningless without the threshold behind it, so the caption
-     states the operating point every time the badge is on screen. */
-  const yd = META && META.youden;
-  document.getElementById('pickcap').innerHTML =
-    `${L.length} record${L.length===1?'':'s'} — click a line`
-    + (yd ? `<br><b>YES/no</b> is the model's call at delivery, at the `
-            + `Youden-optimal cut-off (sensitivity ${yd.sens.toFixed(2)}, `
-            + `specificity ${yd.spec.toFixed(2)}, ${yd.n_yes} of ${yd.n} records `
-            + `called YES). The dot is the measured outcome.` : '');
   box.innerHTML='';
   /* Both computed once for the whole list -- each is a bisection over every
      record, and doing it per row would be 512 of them. */
@@ -1661,15 +1657,34 @@ function drawFig(s){
      of the 30- and 60-minute lookbacks that every win_/lwin_ feature in the
      table is measured over, so they are named on the plot. */
   const figAnn = [];
+  /* Where the recording actually starts, in the same axis the cursor is on.
+     Before minute 30 the dashed lookback edge falls off the left of the trace
+     entirely -- the screenshot of this bug had "◀ last 30 min ▶" floating over
+     blank paper at minute 20 -- so the edge is clamped to the start and renamed
+     to the span that exists. A window that has not run cannot be drawn as
+     though it had. */
+  const recStart = x[NOW] - REC.t_min[NOW];
+  const elapsedNow = REC.t_min[NOW];
   [[30,'dash',15],[60,'dot',45]].forEach(([d,dash,mid])=>{
-    for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW]-d,x1:x[NOW]-d,
+    const short = elapsedNow < d;
+    /* Both edges land on the recording's start once neither window has run, so
+       only the longer one is drawn there -- two lines and two labels stacked on
+       the same pixel say nothing the one does not. */
+    if(short && d === 30 && elapsedNow < 60) return;
+    const edge = short ? recStart : x[NOW]-d;
+    for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:edge,x1:edge,
       yref:yrefOf(r),y0:0,y1:1,
       xref:xrefOf(r),line:{color:GUIDE,width:1.2,dash:dash}});
     /* Centred in the stretch it names. The 60 label sits in the part of the
-       long window the short one does not cover, so the two never collide. */
-    if(onScreen(x[NOW]-mid))
-      figAnn.push({x:x[NOW]-mid, xref:'x', yref:'y domain', y:1, yanchor:'top',
-        yshift:-3, xanchor:'center', text:`◀ last ${d} min ▶`, showarrow:false,
+       long window the short one does not cover, so the two never collide --
+       and when the window is short, in the middle of what there is. */
+    const at = short ? (edge + x[NOW])/2 : x[NOW]-mid;
+    if(onScreen(at))
+      figAnn.push({x:at, xref:'x', yref:'y domain', y:1, yanchor:'top',
+        yshift:-3, xanchor:'center',
+        text: short ? `◀ only ${Math.round(elapsedNow)} of ${d} min ▶`
+                    : `◀ last ${d} min ▶`,
+        showarrow:false,
         font:{size:11,color:GUIDE}, bgcolor:'rgba(255,255,255,.78)'});
   });
   for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW],x1:x[NOW],
@@ -1824,6 +1839,12 @@ let TWIN = 'all';   /* which window the table is filtered to */
 
 function tableRows(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
+  /* Minutes of trace behind the cursor. A trailing window shorter than this has
+     run its full span; one longer than it has not, and the feature measured
+     over it is missing for that reason rather than for want of signal. The two
+     read identically in the value column otherwise -- both are blank -- and
+     they are not the same claim, so the row says which. */
+  const elapsed = REC.t_min[NOW];
   /* Dropped outright rather than shown with a zero contribution: a row reading
      0.000× would look like a finding about this record instead of a setting. */
   let rows = phi.map((v,i)=>({
@@ -1832,7 +1853,7 @@ function tableRows(){
     pct: cohortPct(X[i], META.pctgrid[F[i]]),
     med: META.pctgrid[F[i]] ? META.pctgrid[F[i]][50] : null,
     mult: Math.exp(v), phi: v,
-  }));
+  })).map(r=>({...r, imm: r.winr < 9000 && elapsed < r.winr}));
   /* Ranked over ALL features, then filtered: a rank is a feature's standing in
      the whole explanation, and renumbering 1..n inside a filtered view would
      claim the top row of "Last 30 min" is the record's strongest driver. */
@@ -1907,23 +1928,39 @@ function drawTable(){
   rows.forEach(r=>{
     const c = FAM[r.cat]||FAM.Other;
     const bx = boxCell(r.f, r.val, r.phi);
-    h+=`<tr data-feat="${esc(r.feat)}" data-unit="${esc(r.unit||'')}"`
-     + ` data-win="${esc(r.win)}" data-mean="${esc(r.mean||'')}"`
+    /* The span as the record can actually support it. Saying "Last 60 min" at
+       minute 20 is the claim this whole state exists to stop the page making. */
+    const winTxt = r.imm ? `${r.win} — only ${Math.round(REC.t_min[NOW])} so far`
+                         : r.win;
+    h+=`<tr class="${r.imm?'immature':''}" data-feat="${esc(r.feat)}" data-unit="${esc(r.unit||'')}"`
+     + ` data-win="${esc(winTxt)}" data-mean="${esc(r.mean||'')}"`
+     + ` data-imm="${r.imm?Math.round(REC.t_min[NOW])+'/'+r.winr:''}"`
      + ` data-q="${bx.q ? esc(bx.q.map(fmtNum).join('|')) : ''}">`
      + `<td class="num">${r.rank}</td>`
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
      + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
-     + `<td style="color:var(--mut)">${esc(r.win)}</td>`
+     + `<td style="color:var(--mut)">${esc(winTxt)}</td>`
      + `<td class="num">${r.val==null
-          ? '<span class="miss" title="The channel this needs was too sparse in '
-            + 'this window to state a value. The model was given a missing value, '
-            + 'not a zero.">not measured</span>'
+          ? (r.imm
+             ? '<span class="miss" title="The recording is not yet as long as '
+               + 'the window this feature is measured over, so there is nothing '
+               + 'to measure yet. The model was given a missing value, not a '
+               + 'zero -- a zero here would read as a window that ran its full '
+               + 'span and found nothing.">window not complete</span>'
+             : '<span class="miss" title="The channel this needs was too sparse in '
+               + 'this window to state a value. The model was given a missing value, '
+               + 'not a zero.">not measured</span>')
           : r.val}</td>`
      + `<td class="num">${pctCell(r.pct)}</td>`
      + `<td class="num">${fmtNum(r.med)}</td>`
      + `<td>${bx.html}</td>`
-     + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
-     + `<td class="num">${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
+     /* Grey, not red or green, while the window is short. The number is real --
+        it is what the model's missing branch did, and the bands above sum to
+        the curve only if it is shown -- but it is the model's handling of an
+        absent measurement, not a finding about this trace, and colouring it
+        like one would say the opposite. */
+     + `<td class="num" style="color:${r.imm?'var(--mut)':(r.phi>0?UP:DOWN)}">${r.mult.toFixed(3)}×</td>`
+     + `<td class="num"${r.imm?' style="color:var(--mut)"':''}>${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
   });
   const box = document.getElementById('tbl');
   box.innerHTML = h+'</table>';
@@ -1950,6 +1987,16 @@ function fillTip(tip, d){
   if(d.mean){
     tip.appendChild(document.createElement('br'));
     tip.appendChild(document.createTextNode(d.mean));
+  }
+  if(d.imm){
+    const [have, want] = d.imm.split('/');
+    tip.appendChild(document.createElement('br'));
+    const w = document.createElement('span');
+    w.className = 'u';
+    w.textContent = `Only ${have} min of trace so far, against a ${want}-min `
+                  + `window — not measured yet, and given to the model as `
+                  + `missing rather than as a zero.`;
+    tip.appendChild(w);
   }
   /* The box plot's five numbers, spelled out. The picture answers "is this
      record unusual"; a reader deciding anything on it wants the values. */
