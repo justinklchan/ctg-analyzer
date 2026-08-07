@@ -144,6 +144,11 @@
      the right. It lives in a hover tip instead, so the table stays numeric. */
   #tbl tr[data-feat]{cursor:help}
   #tbl tr[data-feat]:hover{background:var(--warm)}
+  /* The internal column name. Quiet enough that the display label still reads
+     as the row's title, monospace so it is obviously a string to grep for
+     rather than more prose. */
+  code.key{font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+           color:var(--ink3);letter-spacing:-.1px;user-select:all}
   /* A pooled chip hides a list, so it says so on approach. */
   .chipbox[data-pool] .chip,.chipbox[data-pool] small{cursor:help}
   /* The scrubber reads as part of the figure, so it sits flush under it and
@@ -1932,13 +1937,19 @@ function drawTable(){
        minute 20 is the claim this whole state exists to stop the page making. */
     const winTxt = r.imm ? `${r.win} — only ${Math.round(REC.t_min[NOW])} so far`
                          : r.win;
-    h+=`<tr class="${r.imm?'immature':''}" data-feat="${esc(r.feat)}" data-unit="${esc(r.unit||'')}"`
+    h+=`<tr class="${r.imm?'immature':''}" data-feat="${esc(r.feat)}" data-key="${esc(r.f)}" data-unit="${esc(r.unit||'')}"`
      + ` data-win="${esc(winTxt)}" data-mean="${esc(r.mean||'')}"`
      + ` data-imm="${r.imm?Math.round(REC.t_min[NOW])+'/'+r.winr:''}"`
      + ` data-q="${bx.q ? esc(bx.q.map(fmtNum).join('|')) : ''}">`
      + `<td class="num">${r.rank}</td>`
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
-     + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
+     /* The internal column name, under the label it is displayed as. Every
+        other column describes what the feature MEANS; this one says where to
+        find it -- it is the string to grep for in build_timevarying_features.py
+        and the key into META.feat_cols, and without it a reader who wants to
+        check how a row was computed has to guess the mapping from prose. */
+     + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}`
+     + `<br><code class="key">${esc(r.f)}</code></td>`
      + `<td style="color:var(--mut)">${esc(winTxt)}</td>`
      + `<td class="num">${r.val==null
           ? (r.imm
@@ -1983,6 +1994,12 @@ function fillTip(tip, d){
   if(d.win){
     const w = document.createElement('span');
     w.className='u'; w.textContent = ` · ${d.win}`; tip.appendChild(w);
+  }
+  if(d.key){
+    const k = document.createElement('code');
+    k.className='key'; k.textContent = d.key;
+    tip.appendChild(document.createElement('br'));
+    tip.appendChild(k);
   }
   if(d.mean){
     tip.appendChild(document.createElement('br'));
