@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTG subgroup fairness audit</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="logo.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;600;700;800&display=swap"
+      rel="stylesheet">
+<style>
+  /* The record explorer's palette and furniture again -- three pages, one app.
+     No plotting library here either: every mark on this page is a bar, and a
+     bar is a div with a width. */
+  :root{
+    --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
+    --surface:#fcfcfb; --warm:#f0efec; --panel:#ffffff; --sel:#2a78d6;
+    --ink2:#52514e; --ink3:#8a8880;
+    /* Categorical, assigned in fixed order and never cycled: at most three
+       groups share a chart here. Validated for CVD separation over ALL pairs
+       against a white panel, not just adjacent ones -- with three series every
+       pair is adjacent to the eye. The amber sits under 3:1 on white, which is
+       why every bar carries its number and every panel keeps its table. */
+    --c1:#2a78d6; --c2:#d9822b; --c3:#b5477f;
+    --neutral:#a8a6a0;
+    --maxw:1180px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--surface)}
+  a{color:var(--sel)}
+  #wrap{display:flex;min-height:100vh}
+  #side{width:250px;flex:none;border-right:1px solid var(--line);padding:16px 14px;
+        position:sticky;top:0;height:100vh;overflow:auto;background:var(--warm)}
+  #main{flex:1;min-width:0;padding:14px 22px 60px}
+  #col{width:100%;max-width:var(--maxw);margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:19px;margin:0 0 4px}
+  h3{font-size:13px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;
+     letter-spacing:.5px;font-weight:700}
+  p{margin:8px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.035)}
+  .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
+  .lead{font-size:15px;color:var(--ink2);max-width:78ch}
+  .nav{display:block;padding:9px 12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--panel);color:var(--ink2);text-decoration:none;font-size:14px;
+    font-weight:600;margin-bottom:8px}
+  .nav:hover{border-color:var(--ink3);color:var(--ink)}
+
+  /* The horizon control. A risk score that is fair at delivery and unfair an
+     hour out has failed at the only job a warning system has, so the reader
+     gets to move the clock rather than being shown one moment. */
+  .hz{display:flex;flex-direction:column;gap:5px;margin-bottom:6px}
+  .hz button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+    padding:8px 11px;border:1px solid var(--line);border-radius:10px;
+    background:var(--panel);color:var(--ink2);font:inherit;font-size:14px;
+    font-weight:600;cursor:pointer}
+  .hz button:hover{border-color:var(--ink3)}
+  .hz button.on{background:var(--sel);border-color:var(--sel);color:#fff}
+  .hz button .n{margin-left:auto;font-weight:400;font-size:12.5px;opacity:.75;
+    font-variant-numeric:tabular-nums}
+
+  .jump a{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:8px;
+    color:var(--ink2);text-decoration:none;font-size:13.5px}
+  .jump a:hover{background:rgba(0,0,0,.05);color:var(--ink)}
+  /* Filled = a gap clears zero at the horizon on screen. Hollow = it does at
+     some OTHER horizon, which is worth a mark of its own: an attribute that is
+     level at delivery and not level an hour out is exactly the failure a
+     single-moment audit would have missed. */
+  .jump a .dot{width:7px;height:7px;border-radius:99px;flex:none;background:var(--neutral)}
+  .jump a.hit .dot{background:var(--up)}
+  .jump a.elsewhere .dot{background:transparent;box-shadow:inset 0 0 0 2px var(--up)}
+  .jump a .tag{margin-left:auto;font-size:11px;color:var(--ink3)}
+
+  .stats{display:flex;flex-wrap:wrap;gap:26px;margin:10px 0 2px}
+  .stat b{display:block;font-size:24px;font-weight:800;line-height:1.15;
+    font-variant-numeric:tabular-nums}
+  .stat span{font-size:13px;color:var(--mut)}
+
+  .badge{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.3px;
+    text-transform:uppercase;padding:3px 8px;border-radius:999px;vertical-align:2px;
+    margin-left:8px;border:1px solid var(--line);color:var(--mut);background:var(--warm)}
+  .badge.inmodel{border-color:#d8c39a;background:#fdf6e7;color:#8a6516}
+  .badge.hit{border-color:#f0c2c2;background:#fdeeee;color:#a4302f}
+
+  /* FOUR PANELS PER ATTRIBUTE, one per metric, because the metrics disagree
+     with each other and that disagreement is the lesson. Parity has almost no
+     AUROC gap and an enormous detection gap; a page that reported one number
+     would have shown either "fine" or "broken" and neither is the finding. */
+  .panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+  @media (max-width:900px){.panels{grid-template-columns:1fr}}
+  .panel{border:1px solid var(--line);border-radius:12px;padding:12px 13px 13px;
+    background:var(--surface)}
+  .panel .why{font-size:12.5px;color:var(--mut);margin:-4px 0 9px;line-height:1.35}
+
+  .grow{display:grid;grid-template-columns:minmax(96px,15ch) 1fr 52px;gap:10px;
+    align-items:center;padding:3px 0}
+  .grow .gname{font-size:13px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;display:flex;align-items:center;gap:6px}
+  .grow .gname .sw{width:9px;height:9px;border-radius:3px;flex:none}
+  .track{position:relative;height:14px;background:var(--warm);border-radius:4px}
+  .bar{position:absolute;top:0;bottom:0;border-radius:4px;min-width:2px;
+    /* A 2px surface ring so a bar never fuses with the track or its neighbour. */
+    box-shadow:0 0 0 2px var(--surface)}
+  .grow .val{font-size:13px;text-align:right;font-variant-numeric:tabular-nums;
+    color:var(--ink)}
+  .grow.small .val,.grow.small .gname{color:var(--ink3)}
+
+  /* THE GAP, drawn against zero. Grey unless its interval clears zero: the
+     colour is the claim, so a gap the bootstrap cannot separate from nothing
+     does not get to look like a result. */
+  .gap{margin-top:11px;padding-top:10px;border-top:1px dashed var(--line)}
+  .gaprow{display:grid;grid-template-columns:1fr 118px;gap:10px;align-items:center}
+  .gtrack{position:relative;height:20px}
+  .gtrack .zero{position:absolute;top:0;bottom:0;width:1px;background:var(--ink3)}
+  .gtrack .gbar{position:absolute;top:5px;height:10px;border-radius:3px;
+    background:var(--neutral);min-width:2px}
+  .gtrack .gbar.sig{background:var(--up)}
+  .gtrack .whisk{position:absolute;top:9px;height:2px;background:var(--ink3);opacity:.85}
+  .gtrack .cap-l,.gtrack .cap-r{position:absolute;top:5px;height:10px;width:2px;
+    background:var(--ink3);opacity:.85}
+  .gaptxt{font-size:12.5px;color:var(--mut);text-align:right;
+    font-variant-numeric:tabular-nums;line-height:1.25}
+  .gaptxt b{color:var(--ink);font-size:13px}
+  .gaptxt.sig b{color:var(--up)}
+
+  table.tbl{width:100%;border-collapse:collapse;margin-top:12px;font-size:13.5px}
+  table.tbl th{text-align:right;font-size:11.5px;text-transform:uppercase;
+    letter-spacing:.4px;color:var(--mut);font-weight:700;padding:0 0 6px;
+    border-bottom:1px solid var(--line)}
+  table.tbl th:first-child,table.tbl td:first-child{text-align:left}
+  table.tbl td{text-align:right;padding:5px 0;border-bottom:1px solid var(--line);
+    font-variant-numeric:tabular-nums}
+  table.tbl tr:last-child td{border-bottom:none}
+  table.tbl td.small{color:var(--ink3)}
+  table.tbl .sw{display:inline-block;width:9px;height:9px;border-radius:3px;
+    margin-right:7px}
+
+  .note{font-size:13.5px;color:var(--ink2);background:var(--warm);
+    border-left:3px solid var(--line);border-radius:0 8px 8px 0;padding:9px 12px;
+    margin:10px 0 0;max-width:80ch}
+  .keyline{border-left-color:var(--up)}
+
+  #tip{position:fixed;z-index:60;pointer-events:none;display:none;max-width:280px;
+    background:#1b1b1a;color:#fff;font-size:12.5px;line-height:1.4;padding:7px 10px;
+    border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.22)}
+  #tip b{color:#fff}
+  #err{display:none;margin:20px 0;padding:14px 16px;border:1px solid var(--up);
+    border-radius:12px;color:var(--up);background:#fdeeee}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <a class="nav" href="index.html">&larr; Record explorer</a>
+    <a class="nav" href="importance.html">Feature importance</a>
+    <a class="nav" href="stability.html">Feature stability</a>
+
+    <h3 style="margin-top:18px">Horizon</h3>
+    <div class="hz" id="hz"></div>
+    <p class="cap" style="font-size:12.5px">Minutes before the end of the trace.
+      The score is read at the latest window at least this far out.</p>
+
+    <h3 style="margin-top:18px">Attributes</h3>
+    <div class="jump" id="jump"></div>
+    <p class="cap" style="font-size:12.5px">A filled dot marks a gap whose
+      interval clears zero at the horizon shown; a hollow one, at a different
+      horizon only. Alarm-rate gaps do not count — those are supposed to
+      differ.</p>
+  </div>
+
+  <div id="main"><div id="col">
+    <h1>Does the risk score work equally well for everyone?</h1>
+    <p class="lead">A subgroup audit of the out-of-fold risk score, in the
+      <a href="https://fairlearn.org/">fairlearn</a> sense: one shared operating
+      point, and error rates measured separately inside each group. Nothing is
+      refit here — this reads the same out-of-fold scores the record explorer
+      draws.</p>
+
+    <div id="err"></div>
+    <div id="head"></div>
+
+    <div class="card">
+      <h2>Two questions that both get called “fairness”</h2>
+      <p class="lead">They pull in opposite directions on this cohort, so it is
+        worth separating them before reading any number below.</p>
+      <div class="panels" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="panel">
+          <h3>Does it alarm equally often?</h3>
+          <p class="cap"><b>Demographic parity.</b> Same share of each group
+            flagged. On this cohort that is the <em>wrong</em> target:
+            nulliparous labours really do end in acidaemia about twice as often
+            as parous ones, and forcing the alarm rates level would mean
+            deliberately under-warning the higher-risk group. A gap in the alarm
+            rate here is expected, and on its own it is not a finding.</p>
+        </div>
+        <div class="panel">
+          <h3>Does it catch equally well?</h3>
+          <p class="cap"><b>Equal opportunity.</b> Among the labours that
+            <em>were</em> acidaemic, the same share detected. Different base
+            rates do not excuse a gap here: a missed case is a missed case, and
+            two women with the same outcome should have had the same chance of
+            being warned. This is the metric to read first.</p>
+        </div>
+      </div>
+      <p class="note">Both are measured at a <b>single cohort-wide threshold</b>
+        — Youden’s J on the log-odds at delivery, the same operating point the
+        record explorer uses. That is deliberate: a deployed alarm has one
+        threshold, and choosing a separate cut per group is a mitigation, not a
+        measurement. It would equalise the very thing being measured here.</p>
+    </div>
+
+    <div id="attrs"></div>
+
+    <div class="card">
+      <h2>What this audit cannot tell you</h2>
+      <p class="lead"><b>The usual axes are not in the data.</b> CTU-CHB is one
+        hospital in Brno over 2010–2012, and its headers carry no race,
+        ethnicity, language, insurance or deprivation field. Every grouping on
+        this page is a clinical or device variable. Nothing here speaks to the
+        disparities those absent fields would be needed to see, and their
+        absence is not evidence that there are none.</p>
+      <p class="lead"><b>The intervals are narrower than the real uncertainty.</b>
+        They are a bootstrap over records, so they cover which labours landed in
+        the evaluation set — and nothing else. They do <em>not</em> cover the
+        model’s own seed-to-seed instability, which on this cohort moves AUROC
+        at delivery over 0.659–0.706. A gap whose interval clears zero here has
+        passed the easier of the two tests; confirming it needs the refit band
+        from <code>risk_uncertainty.py</code>, run per subgroup.</p>
+      <p class="lead"><b>Small groups are not scored.</b> A group with fewer than
+        <span id="minpos">10</span> acidaemic or ten non-acidaemic records is
+        shown with its counts and left blank for the rates. Pre-eclampsia has 17
+        records and 4 of them acidaemic; there is no honest sensitivity to
+        report from four events, so none is.</p>
+      <p class="lead"><b>A gap is not yet a cause.</b> None of these attributes
+        was randomly assigned. Where an attribute is also a model input it is
+        marked, because that changes what the gap means — but even the axes the
+        model never sees carry whatever else differs about those labours.</p>
+    </div>
+
+    <p class="cap" id="foot"></p>
+  </div></div>
+</div>
+<div id="tip"></div>
+
+<script>
+const PAL = ['var(--c1)', 'var(--c2)', 'var(--c3)'];
+
+// The four metrics, in the order the panels read. Each carries the sentence
+// that says what a gap in it would MEAN, because "TPR" on its own has sent
+// more than one reader to the wrong conclusion.
+const METRICS = [
+  {key:'tpr', label:'Detection rate',
+   why:'Of the labours that ended acidaemic, the share the score flagged. ' +
+       'A gap here is the equal-opportunity failure: cases missed in one group ' +
+       'that would have been caught in the other.'},
+  {key:'fpr', label:'False-alarm rate',
+   why:'Of the labours that did not end acidaemic, the share flagged anyway. ' +
+       'A gap is unequal exposure to unnecessary intervention.'},
+  {key:'auroc', label:'Ranking (AUROC)',
+   why:'Whether the score orders labours correctly inside the group, ignoring ' +
+       'where the threshold sits. It can look fine while detection does not.'},
+  {key:'selection_rate', label:'Alarm rate',
+   why:'The share of the group flagged at all. Expected to differ wherever the ' +
+       'groups differ in real risk — read it against prevalence, not against zero.'},
+];
+
+let DATA = null, HZ = 0;
+
+const pct = v => (v === null || v === undefined || Number.isNaN(v)) ? '—' : (100*v).toFixed(0) + '%';
+const dec = v => (v === null || v === undefined || Number.isNaN(v)) ? '—' : v.toFixed(3);
+const sgn = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(3);
+const isNum = v => typeof v === 'number' && !Number.isNaN(v);
+
+const tip = document.getElementById('tip');
+function bindTip(el, html){
+  el.addEventListener('mouseenter', () => { tip.innerHTML = html; tip.style.display = 'block'; });
+  el.addEventListener('mousemove', e => {
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 10) + 'px';
+    tip.style.top  = Math.max(8, e.clientY - h - 12) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
+/* Whether a bootstrap interval sits wholly on one side of zero. The page's
+   whole editorial line is in this one predicate: it decides which gaps get
+   colour, which attributes get a red dot in the rail, and which get described
+   as findings rather than as numbers. */
+function clearsZero(ci){ return !!ci && (ci.lo > 0 || ci.hi < 0); }
+
+/* A gap in the ALARM rate is left out of this test on purpose. The groups
+   differ in real risk, so the alarm rates are supposed to differ; counting
+   that as a hit would light up every prognostic attribute on the page and
+   bury the one finding that matters. */
+function hitAt(attr, h){
+  const hd = attr.by_horizon[String(h)];
+  return !!hd && !!hd.gap &&
+    METRICS.some(m => m.key !== 'selection_rate' && clearsZero(hd.gap.ci[m.key]));
+}
+function hitElsewhere(attr){
+  return DATA.horizons.some(h => h !== HZ && hitAt(attr, h));
+}
+
+function renderHead(){
+  const c = DATA.cohort[String(HZ)];
+  document.getElementById('head').innerHTML = `
+    <div class="card">
+      <div class="stats">
+        <div class="stat"><b>${c.n}</b><span>records scored</span></div>
+        <div class="stat"><b>${c.n_pos}</b><span>ended acidaemic</span></div>
+        <div class="stat"><b>${dec(c.auroc)}</b><span>cohort AUROC</span></div>
+        <div class="stat"><b>${pct(c.tpr)}</b><span>cohort detection rate</span></div>
+        <div class="stat"><b>${pct(c.fpr)}</b><span>cohort false-alarm rate</span></div>
+      </div>
+      <p class="cap">At ${HZ === 0 ? 'delivery' : HZ + ' minutes before the end of the trace'},
+        with the alarm set at log-odds ≥ ${DATA.cut.toFixed(3)}.</p>
+    </div>`;
+}
+
+function renderRail(){
+  const hz = document.getElementById('hz');
+  hz.innerHTML = DATA.horizons.map(h => {
+    const c = DATA.cohort[String(h)];
+    return `<button data-h="${h}" class="${h === HZ ? 'on' : ''}">
+      ${h === 0 ? 'At delivery' : h + ' min before'}<span class="n">n=${c.n}</span></button>`;
+  }).join('');
+  hz.querySelectorAll('button').forEach(b => b.onclick = () => {
+    HZ = +b.dataset.h; render();
+    history.replaceState(null, '', '?h=' + HZ);
+  });
+
+  document.getElementById('jump').innerHTML = DATA.attributes.map(a => {
+    const cls = hitAt(a, HZ) ? 'hit' : hitElsewhere(a) ? 'elsewhere' : '';
+    return `<a href="#a-${a.key}" class="${cls}"><span class="dot"></span>
+      ${a.label}${a.in_model ? '<span class="tag">input</span>' : ''}</a>`;
+  }).join('');
+}
+
+/* One metric panel: a bar per group, then the paired gap under a dashed rule.
+   The bars share a 0..1 domain rather than being scaled to their own maximum,
+   so a 16% detection rate looks like 16% of the track and cannot be flattered
+   by the company it keeps. AUROC is the exception -- it starts at 0.5, since
+   a coin flip is the floor, not zero. */
+function panel(attr, hd, m){
+  const names = Object.keys(hd.groups);
+  const lo = m.key === 'auroc' ? 0.5 : 0;
+  const span = 1 - lo;
+
+  const rows = names.map((nm, i) => {
+    const g = hd.groups[nm];
+    const v = g[m.key];
+    const ok = isNum(v);
+    const w = ok ? Math.max(0, Math.min(1, (v - lo) / span)) * 100 : 0;
+    const col = PAL[i % PAL.length];
+    const label = m.key === 'auroc' ? dec(v) : pct(v);
+    return `<div class="grow${g.too_small ? ' small' : ''}" data-tip="${
+        encodeURIComponent(`<b>${nm}</b><br>${m.label}: ${label}<br>` +
+          `${g.n} records, ${g.n_pos} acidaemic` +
+          (g.too_small ? '<br>too small to score' : ''))}">
+      <div class="gname"><span class="sw" style="background:${col}"></span>${nm}</div>
+      <div class="track">${ok ? `<div class="bar" style="left:0;width:${w}%;background:${col}"></div>` : ''}</div>
+      <div class="val">${g.too_small && !ok ? '—' : label}</div>
+    </div>`;
+  }).join('');
+
+  let gap = '';
+  if (hd.gap && isNum(hd.gap.point[m.key])) {
+    const p = hd.gap.point[m.key], ci = hd.gap.ci[m.key], sig = clearsZero(ci);
+    // Symmetric domain around zero, wide enough to hold the whiskers.
+    const lim = Math.max(0.2, Math.abs(p) * 1.15,
+                         ci ? Math.max(Math.abs(ci.lo), Math.abs(ci.hi)) * 1.1 : 0);
+    const x = v => (0.5 + v / (2 * lim)) * 100;
+    const l = Math.min(x(0), x(p)), r = Math.max(x(0), x(p));
+    gap = `<div class="gap"><div class="gaprow">
+      <div class="gtrack">
+        <div class="zero" style="left:50%"></div>
+        <div class="gbar${sig ? ' sig' : ''}" style="left:${l}%;width:${r - l}%"></div>
+        ${ci ? `<div class="whisk" style="left:${x(ci.lo)}%;width:${x(ci.hi) - x(ci.lo)}%"></div>
+                <div class="cap-l" style="left:${x(ci.lo)}%"></div>
+                <div class="cap-r" style="left:${x(ci.hi)}%"></div>` : ''}
+      </div>
+      <div class="gaptxt${sig ? ' sig' : ''}"><b>${sgn(p)}</b><br>
+        ${ci ? `95% ${sgn(ci.lo)} to ${sgn(ci.hi)}` : ''}</div>
+    </div>
+    <p class="cap" style="font-size:12px;margin-top:5px">${hd.gap.a} minus ${hd.gap.b} —
+      ${sig ? 'interval clears zero' : 'interval crosses zero, so this is not a finding'}</p>
+    </div>`;
+  }
+
+  return `<div class="panel"><h3>${m.label}</h3>
+    <p class="why">${m.why}</p>${rows}${gap}</div>`;
+}
+
+function attrCard(a){
+  const hd = a.by_horizon[String(HZ)];
+  if (!hd) return '';
+  const names = Object.keys(hd.groups);
+  const hit = hitAt(a, HZ), elsewhere = !hit && hitElsewhere(a);
+
+  const tbl = `<table class="tbl">
+    <tr><th>Group</th><th>Records</th><th>Acidaemic</th><th>Prevalence</th>
+        <th>AUROC</th><th>Detected</th><th>False alarm</th><th>Alarmed</th></tr>
+    ${names.map((nm, i) => {
+      const g = hd.groups[nm];
+      return `<tr><td><span class="sw" style="background:${PAL[i % PAL.length]}"></span>${nm}</td>
+        <td>${g.n}</td><td>${g.n_pos}</td><td>${pct(g.prevalence)}</td>
+        <td class="${g.too_small ? 'small' : ''}">${g.too_small ? 'too small' : dec(g.auroc)}</td>
+        <td class="${g.too_small ? 'small' : ''}">${g.too_small ? '—' : pct(g.tpr)}</td>
+        <td class="${g.too_small ? 'small' : ''}">${g.too_small ? '—' : pct(g.fpr)}</td>
+        <td>${pct(g.selection_rate)}</td></tr>`;
+    }).join('')}</table>`;
+
+  return `<div class="card" id="a-${a.key}">
+    <h2>${a.label}
+      ${a.in_model ? '<span class="badge inmodel" title="the model reads this attribute directly">a model input</span>' : ''}
+      ${hit ? '<span class="badge hit">gap clears zero</span>' : ''}
+      ${elsewhere ? '<span class="badge">level here, not at every horizon</span>' : ''}</h2>
+    ${a.note ? `<p class="lead">${a.note}</p>` : ''}
+    ${a.in_model
+      ? `<p class="note">The model reads this attribute directly, as
+         <code>mh_${a.key}</code>. It is entitled to move the score with it, and
+         doing so is what makes the score prognostically useful — but that is
+         also the mechanism by which one group can end up almost never reaching
+         the threshold.</p>`
+      : `<p class="note">The model never sees this attribute. Any gap is the
+         score reconstructing the split from the trace, or the groups differing
+         in something the trace does capture.</p>`}
+    ${tbl}
+    <div class="panels">${METRICS.map(m => panel(a, hd, m)).join('')}</div>
+  </div>`;
+}
+
+function render(){
+  renderHead(); renderRail();
+  document.getElementById('attrs').innerHTML = DATA.attributes.map(attrCard).join('');
+  document.querySelectorAll('[data-tip]').forEach(el =>
+    bindTip(el, decodeURIComponent(el.dataset.tip)));
+  document.getElementById('minpos').textContent = DATA.min_pos;
+  document.getElementById('foot').textContent =
+    `Built by fairness_audit.py from the out-of-fold scores: ${DATA.n_boot} bootstrap ` +
+    `resamples, groups scored only above ${DATA.min_pos} events per side.`;
+}
+
+fetch('data/fairness.json')
+  .then(r => { if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return r.json(); })
+  .then(d => {
+    DATA = d;
+    const want = +new URLSearchParams(location.search).get('h');
+    HZ = d.horizons.includes(want) ? want : d.horizons[0];
+    render();
+    // The cards do not exist until the fetch lands, so the browser has already
+    // given up on the fragment by now. Re-aim at it once there is something to
+    // scroll to, or a shared link to one attribute opens at the top.
+    if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
+  })
+  .catch(e => {
+    const box = document.getElementById('err');
+    box.style.display = 'block';
+    box.innerHTML = `<b>Could not load data/fairness.json</b> (${e.message}).<br>
+      Run <code>python fairness_audit.py</code>, then serve the folder —
+      <code>fetch</code> will not read a file:// path.`;
+  });
+</script>
+</body>
+</html>

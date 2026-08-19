@@ -270,11 +270,14 @@
 
    <div id="sidebody">
     <a class="nav" href="index.html">&#10094; Record explorer</a>
+    <a class="nav" href="fairness.html">Subgroup fairness audit</a>
+    <a class="nav" href="stability.html">Does this ranking hold up?</a>
 
-    <h3>Annotations</h3>
+    <h3>Model arm</h3>
     <div id="srcpills">
       <button class="pill on" data-s="detector">Automated</button>
       <button class="pill" data-s="expert">Expert</button>
+      <button class="pill" data-s="win30">30-min set</button>
     </div>
     <p class="cap" id="srcnote"></p>
 
@@ -351,7 +354,8 @@ const FAM = {
   'FHR distribution':'#e87ba4','Baseline':'#2a78d6','Variability':'#008300',
   'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
   'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
-  'Labour stage':'#b5651d','Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
+  'Labour stage':'#b5651d','Decel-UC coupling':'#c2185b',
+  'Acquisition':'#7a5c99','Other':'#b3b1a8'};
 const UP='#e34948', DOWN='#008300';
 /* THE TWO DEVICES, in compare mode. Colour has to carry the device there, so
    the family swatch stays beside the feature name and the bars take these
@@ -774,16 +778,22 @@ function bindTips(box, sel, fill){
   };
 }
 
-/* The same two arms the record explorer switches between, and the same
+/* The same three arms the record explorer switches between, and the same
    directories -- see the SRC_DIR comment there. The ranking is a mean over
-   per-record |phi|, so it is not a re-sort of one table: the expert arm is a
-   different model over different features and every bar moves. */
-const SRC_DIR = {detector:'data', expert:'data-expert'};
+   per-record |phi|, so it is not a re-sort of one table: each arm is a
+   different model and every bar moves. The 30-min arm changes the feature
+   LIST rather than the events, so it is the one where rows appear and
+   disappear rather than merely reorder. */
+const SRC_DIR = {detector:'data', expert:'data-expert', win30:'data-win30'};
 const SRC_NOTE = {
   detector:'Events from the pipeline detector (ctg_annotate.py) — what the '
     + 'shipped model was trained on.',
   expert:'Events hand-marked by clinicians, and a model retrained on them. '
-    + 'Fewer records reach the scoring threshold, so the counts change too.'};
+    + 'Fewer records reach the scoring threshold, so the counts change too.',
+  win30:'Same detector events, 30 inputs all measured over the last 30 '
+    + 'minutes — no 60-minute or whole-labour spans. Every cumulative feature '
+    + 'the shipped set leans on is absent here, so this ranking is what the '
+    + 'model finds when it can only see the recent window.'};
 let SRC = 'detector';
 const DATA = ()=> SRC_DIR[SRC];
 

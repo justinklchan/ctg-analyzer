@@ -117,7 +117,14 @@
   #picker .call.y{background:var(--up);color:#fff}
   #picker .call.n{background:transparent;color:var(--ink3);
     border:1px solid var(--line)}
+  /* THE CALL THE REFITS DISAGREE ABOUT. Neither the solid YES nor the quiet no:
+     a third state, because "the model says yes" and "the model says yes about
+     six times in ten" are different claims and the list was making only the
+     first. Amber rather than a lighter red -- it is not a weaker YES, it is a
+     different kind of answer. */
+  #picker .call.q{background:#fff5e0;color:#a05a00;border:1px solid #e8b866}
   #picker .row.sel .call.n{color:#eaf2ff;border-color:rgba(255,255,255,.45)}
+  #picker .row.sel .call.q{background:#ffe9c2;color:#7a4400}
   #picker .meta{margin-left:auto;color:var(--mut);font-size:13px;
     font-variant-numeric:tabular-nums;white-space:nowrap}
   #picker .row.sel{background:var(--sel);color:#fff}
@@ -282,10 +289,18 @@
       onto what is left. <a href="#" id="famall">Turn all on</a>
     </p>
 
-    <h3>Annotations</h3>
+    <h3>Uncertainty</h3>
+    <label class="check" id="bandrow">
+      <input type="checkbox" id="bandon" checked>
+      <span>Show the resampling range</span>
+    </label>
+    <p class="cap" id="bandnote"></p>
+
+    <h3>Model arm</h3>
     <div id="srcpills">
       <button class="pill on" data-s="detector">Automated</button>
       <button class="pill" data-s="expert">Expert</button>
+      <button class="pill" data-s="win30">30-min set</button>
     </div>
     <p class="cap" id="srcnote"></p>
 
@@ -316,6 +331,16 @@
          was picked up. -->
     <p class="pagenav"><a href="importance.html">Feature importance across the
       cohort &#10095;</a></p>
+    <!-- The same model seen from a third angle: not what it asked of each
+         feature, but whether what it produced works as well for one kind of
+         labour as another. -->
+    <p class="pagenav"><a href="fairness.html">Subgroup fairness audit
+      &#10095;</a></p>
+    <!-- And a fourth: how much of that importance ranking is this sample. The
+         ranking on the importance page is one fit; this one refits it dozens
+         of times and reports what holds. -->
+    <p class="pagenav"><a href="stability.html">Which features survive
+      resampling &#10095;</a></p>
 
     <section class="card">
       <h2>Clinical metadata</h2>
@@ -367,23 +392,34 @@
 </div>
 
 <script>
-/* WHICH ANNOTATION SET THE WHOLE PAGE IS BUILT ON.
-   The two arms are separate exports -- separate features, separate model,
+/* WHICH BUILD THE WHOLE PAGE IS READING.
+   Every arm is a separate export -- separate features, separate model,
    separate SHAP -- so switching is not a redraw with different colours, it is a
-   reload of everything the page holds. `data/` is the algorithmic detector,
-   `data-expert/` the clinician marks; both are written by export_static_site.py
-   with --data-dir, and a missing one is what SRC_AVAIL turns off.
+   reload of everything the page holds. Each is written by export_static_site.py
+   with its own --data-dir, and a missing directory is what the catch in
+   setSource() turns back off.
 
-   The detector is the default because it is what the shipped model was trained
-   on. The expert arm marks far fewer events (807 accelerations against 3093 on
-   this cohort), so the two disagree about far more than the strip: every window
-   rate, every cumulative total and every contribution moves with it. */
-const SRC_DIR = {detector:'data', expert:'data-expert'};
+   TWO DIFFERENT AXES share this one control, which is worth being explicit
+   about. Detector vs Expert changes the EVENTS the features are computed from:
+   the expert arm marks far fewer (807 accelerations against 3093 on this
+   cohort), so every window rate and every cumulative total moves with the
+   strip. 30-min set changes the FEATURE LIST instead, on the same detector
+   events: 30 inputs all measured over the last 30 minutes, against the shipped
+   29 that mix 30-minute, 60-minute and whole-labour spans. What the arms have
+   in common is that each is a different model, which is why they cannot be
+   blended and why the whole page reloads. */
+const SRC_DIR = {detector:'data', expert:'data-expert', win30:'data-win30'};
 const SRC_NOTE = {
   detector:'Events from the pipeline detector (ctg_annotate.py) — what the '
     + 'shipped model was trained on.',
   expert:'Events hand-marked by clinicians. Fewer marks, and a model retrained '
-    + 'on them, so the score and every contribution change with the strip.'};
+    + 'on them, so the score and every contribution change with the strip.',
+  win30:'Same detector events, different feature list: 30 inputs, every one of '
+    + 'them measured over the last 30 minutes, with no 60-minute or '
+    + 'whole-labour copies. AUROC 0.693 at delivery, level with the shipped '
+    + 'set\u2019s 0.693, and it reads better through a labour (peak risk '
+    + '0.690 vs 0.682) but worse early on long recordings (0.564 vs 0.628 at '
+    + '90 minutes out).'};
 let SRC = 'detector';
 const DATA = ()=> SRC_DIR[SRC];
 
@@ -506,11 +542,13 @@ let FIT=[0,1];
  * lose it. Two families a model leans on jointly will each look smaller here
  * than a retrain would make the survivor.
  *
- * Maternal history starts off. Its nine inputs are fixed before the trace
- * begins, so its contribution is close to a constant offset -- measured over
- * 150 records it moves by a median of 0.085 in log-odds across a whole labour
- * while sitting at 0.5x to 1.4x -- and that offset sits under every curve
- * making the trace harder to read.
+ * Maternal history starts off. Its five inputs -- age, parity, gravidity,
+ * pyrexia, meconium -- are all fixed before the trace begins, so its
+ * contribution is close to a constant offset: measured over the 536 exported
+ * records it moves by a median of 0.29 in log-odds across a whole labour while
+ * sitting at 0.47x to 1.45x, and that offset sits under every curve making the
+ * trace harder to read. What movement it has comes from the trees, not from
+ * the fields: the family's own values never change within a labour.
  */
 const MH_GROUP = 'Maternal history';
 let OFF = new Set([MH_GROUP]);
@@ -523,6 +561,45 @@ function curveOf(){
   if(!drop.length) return REC.log_or.slice();
   return REC.log_or.map((v,i)=>
     v - drop.reduce((s,g)=>{ const c=REC.phi_group[g][i]; return s+(c==null?0:c); }, 0));
+}
+/* HOW MUCH OF THE CURVE IS THE COHORT IT WAS FIT ON.
+ *
+ * risk_uncertainty.py refits the whole recipe over ~50 seeds. The seed decides
+ * which records train which fold and re-randomises the booster, so the spread
+ * across refits is what this recipe would have said about this record had the
+ * development sample come out differently -- the resampling instability of
+ * Riley et al. 2023, not a Bayesian posterior. `band` is the 2.5th to 97.5th
+ * percentile of that spread at every minute; `pa` is the share of refits that
+ * put the record above the operating point.
+ *
+ * SAMPLING VARIABILITY ONLY. It does not cover bias, a different population,
+ * or anything the features cannot see, so it is a floor on how wrong the
+ * number can be and never a ceiling. The caption says so under the switch.
+ *
+ * WITHDRAWN WHEN THE VIEW CHANGES. The band was computed with maternal history
+ * held out and everything else in -- the page's default. Switch a family and
+ * the curve moves while the band does not, so it is taken away rather than
+ * drawn at the wrong width: a stale envelope that still looks authoritative is
+ * worse than none. */
+function hasBand(){ return !!(REC && REC.band && REC.band.lo); }
+function bandLive(){
+  const b = document.getElementById('bandon');
+  return hasBand() && (!b || b.checked)
+         && OFF.size===1 && OFF.has(MH_GROUP);
+}
+/* The reason it is not showing, for the caption under the switch. */
+function bandWhy(){
+  if(!META || !META.unc) return 'Not exported — run risk_uncertainty.py, then '
+    + 'rebuild the site, and the range appears here.';
+  const n = META.unc.seeds;
+  if(!hasBand()) return `No range was exported for this record.`;
+  if(!(OFF.size===1 && OFF.has(MH_GROUP)))
+    return `Hidden: the range was measured on the default family selection, `
+         + `so it no longer describes this curve. Turn maternal history off `
+         + `and everything else on to bring it back.`;
+  return `The middle 95% of ${n} refits of the whole model, each on a `
+       + `different split of the ${(META.records||[]).length} records. It is `
+       + `sampling variability only — not bias, and not a different hospital.`;
 }
 /* Per-feature contributions at minute t, with switched-off families zeroed --
    so the bar, the chips and the table drop them without any of them needing to
@@ -768,6 +845,16 @@ async function boot(){
     ev.preventDefault();
     OFF.clear(); redraw();
   };
+  /* The whole Uncertainty block goes away when nothing was exported for it, so
+     an export built without risk_uncertainty.py has no dead switch on it. */
+  const brow = document.getElementById('bandrow');
+  if(!META.unc){
+    if(brow) brow.style.display='none';
+    const h = brow && brow.previousElementSibling;
+    if(h && h.tagName==='H3') h.style.display='none';
+  }
+  document.getElementById('bandon').onchange = redraw;
+  document.getElementById('bandnote').textContent = bandWhy();
 
   const ps = document.getElementById('preset');
   Object.entries(META.prevalence_presets).forEach(([k,v])=>{
@@ -821,9 +908,11 @@ async function setSource(src){
     document.querySelectorAll('#srcpills .pill').forEach(b=>
       b.classList.toggle('on', b.dataset.s === prevSrc));
     document.getElementById('srcnote').textContent =
-      'Could not load the ' + src + ' annotations — still showing '
-      + prevSrc + '. Re-run export_static_site.py --data-dir '
-      + SRC_DIR[src] + ' --events ' + src + '.';
+      'Could not load the ' + src + ' arm — still showing ' + prevSrc
+      + '. That export is missing: re-run export_static_site.py --data-dir '
+      + SRC_DIR[src] + (src === 'win30'
+          ? ' against a --feature-set win30 trace.'
+          : ' --events ' + src + '.');
   }finally{
     pills.classList.remove('busy');
   }
@@ -910,6 +999,42 @@ function callsYes(r){
   return yd ? lastLogOr(r) >= yd.cut : null;
 }
 
+/* THE CALL, WITH HOW MUCH OF IT SURVIVES A RESAMPLE.
+ *
+ * `pa` is the share of refits putting this record above the same cut. Where
+ * they agree the pill reads exactly as it always did; where they do not it says
+ * so, because a YES that survives 58% of refits and a YES that survives all of
+ * them are not the same claim and the list was drawing them identically. On
+ * this cohort about a third of records sit in between and roughly half flip on
+ * at least one refit, so this is not a rare footnote.
+ *
+ * The percentage is printed ONLY on the unsettled ones. On every row it is 512
+ * numbers mostly saying "yes, still yes", and that noise is what buries the
+ * third that matter. */
+function callPill(r, lo){
+  const yes = callsYes(r);
+  if(yes==null) return null;
+  const what = `the model predicts ${yes?'ACIDAEMIA':'no acidaemia'} at `
+             + `delivery (predicted risk ${fmtRisk(riskOf(r, lo))})`;
+  const tail = '; the dot on the left is what actually happened';
+  if(r.pa==null || !(META.unc))
+    return {cls: yes?'y':'n', text: yes?'YES':'no', tip: what+tail};
+  const pct = Math.round(100*r.pa), n = META.unc.seeds;
+  /* FIRM MEANS THE REFITS AGREE WITH THIS CALL, not merely that they agree with
+     each other. Testing `pa>=.95 || pa<=.05` looks equivalent and is not: a YES
+     whose refits are 3% for it is unanimous AGAINST the call, and that test
+     would have dressed the one reading the reader most needs to see as the
+     confident one. No record does this today -- 38 sit on the softer version of
+     it, where the call and the majority of refits disagree -- but the failure
+     is silent and the fix is a conditional. */
+  const firm = yes ? r.pa>=.95 : r.pa<=.05;
+  return {cls: firm ? (yes?'y':'n') : 'q',
+          text: firm ? (yes?'YES':'no') : `${yes?'YES':'no'} ${pct}%`,
+          tip: `${what}. ${pct}% of ${n} refits put it above the cut — `
+             + (firm ? 'the refits agree'
+                     : 'they disagree, so this call is not stable') + tail};
+}
+
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
   box.innerHTML='';
@@ -925,21 +1050,17 @@ function fillPicker(){
     if(r.dur!=null) bits.push(`${r.dur}m`);
     const or = Math.exp(lastLogOr(r)) * a;
     const oc = or>1 ? UP : DOWN;
-    const yes = callsYes(r), p = riskOf(r, lo);
     /* The call sits beside the measured outcome dot, so a disagreement between
        what the model said and what happened is one glance rather than two. */
-    const callTip = yes==null ? '' :
-      `the model predicts ${yes?'ACIDAEMIA':'no acidaemia'} at delivery `
-      + `(predicted risk ${fmtRisk(p)}); the dot on the left is what actually `
-      + `happened`;
+    const cp = callPill(r, lo);
     d.innerHTML = `<span class="dot" style="background:${col}" `
                 + `title="${r.y?'Acidaemic':'Not acidaemic'} — the measured outcome"></span>`
                 + `<span class="rid">${r.id}</span>`
                 + `<span class="or" title="odds ratio at delivery" `
                 + `style="background:${oc}1f;color:${oc}">${fmtx(or)}</span>`
-                + (yes==null ? ''
-                   : `<span class="call ${yes?'y':'n'}" title="${callTip}">`
-                     + `${yes?'YES':'no'}</span>`)
+                + (cp==null ? ''
+                   : `<span class="call ${cp.cls}" title="${esc(cp.tip)}">`
+                     + `${cp.text}</span>`)
                 + `<span class="meta">${bits.join(' · ')}</span>`;
     d.onclick=()=>load(r.id); box.appendChild(d);
   });
@@ -965,13 +1086,10 @@ function refreshPickerOr(anchor){
     el.textContent = fmtx(or);
     el.style.background = oc+'1f';
     el.style.color = oc;
-    /* The call is anchor-independent, so only its tooltip -- which quotes the
-       absolute risk -- has to follow the prevalence field. */
-    const cl = d.querySelector('.call');
-    if(cl) cl.title = `the model predicts `
-      + `${callsYes(r)?'ACIDAEMIA':'no acidaemia'} at delivery `
-      + `(predicted risk ${fmtRisk(riskOf(r, lo))}); the dot on the left is `
-      + `what actually happened`;
+    /* The call and its stability are anchor-independent, so only the tooltip --
+       which quotes the absolute risk -- has to follow the prevalence field. */
+    const cl = d.querySelector('.call'), cp = callPill(r, lo);
+    if(cl && cp) cl.title = cp.tip;
   });
 }
 function mark(id){
@@ -1260,8 +1378,17 @@ function redraw(){
     `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
     (REC.hypoxia? 'Acidaemic — cord pH &lt; 7.20' : 'Not acidaemic — cord pH ≥ 7.20') +
     '</span>';
+  /* The reading beside the scrubber carries its own range. This is the one
+     number on the page a reader quotes, so it is the one that most needs to
+     say how far it could have landed from where it did. */
+  const bl = bandLive();
   document.getElementById('scrublab').textContent =
-    `${fmtx(orNow)} ${atNow}`;
+    `${fmtx(orNow)}`
+    + (bl ? ` (${fmtx(Math.exp(REC.band.lo[NOW]+anchor))}–`
+          + `${fmtx(Math.exp(REC.band.hi[NOW]+anchor))})` : '')
+    + ` ${atNow}`;
+  const bn = document.getElementById('bandnote');
+  if(bn) bn.textContent = bandWhy();
   drawFamList();
   refreshPickerOr(anchor);
   drawMeta();
@@ -1541,12 +1668,42 @@ function drawFig(s){
     fillpattern:hatch('#b3b1a8'),line:{width:0},opacity:.85,mode:'lines',
     type:'scatter',name:'Hatched: lowers risk',hoverinfo:'skip',
     xaxis:'x',yaxis:'y'});
+  /* THE RESAMPLING RANGE — over the bands, under the curve. Drawn BEHIND the
+     stack it would be invisible: the bands fill the whole area between the
+     curve and the base value, which is exactly where half the envelope lies.
+     Over the stack and under the black line it reads as a haze around the
+     number, which is what it is. */
+  const BW = bandLive();
+  let blo=null, bhi=null;
+  if(BW){
+    const at = (a,i)=> (a[i]==null ? LOGOR[i] : a[i]) + anchorBase;
+    blo = x.map((_,i)=>at(REC.band.lo,i));
+    bhi = x.map((_,i)=>at(REC.band.hi,i));
+    traces.push({x:x.concat(x.slice().reverse()),
+      y:blo.concat(bhi.slice().reverse()),
+      fill:'toself',fillcolor:'rgba(17,17,17,.13)',line:{width:0},
+      type:'scatter',mode:'lines',hoverinfo:'skip',xaxis:'x',yaxis:'y',
+      name:`Resampling range, 95% of ${(META.unc&&META.unc.seeds)||''} refits`});
+    /* Edges as well as the wash. Over a stack six bands deep a 13% grey is easy
+       to lose, and where the range STOPS is the part the reader is reading. */
+    [blo,bhi].forEach(yy=>traces.push({x:x,y:yy,mode:'lines',
+      line:{color:'rgba(17,17,17,.5)',width:1,dash:'2px,3px'},type:'scatter',
+      showlegend:false,hoverinfo:'skip',xaxis:'x',yaxis:'y'}));
+  }
   traces.push({x:x,y:st.s,mode:'lines',line:{color:'#fff',width:6.5},
                showlegend:false,hoverinfo:'skip',xaxis:'x',yaxis:'y',type:'scatter'});
   traces.push({x:x,y:st.s,mode:'lines',name:'Odds ratio',
     line:{color:'#111',width:3.2},type:'scatter',xaxis:'x',yaxis:'y',
-    customdata:st.s.map(v=>Math.exp(v)),
-    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b>'+
+    /* The range rides in the hover too. The wash says roughly how wide; a
+       reader who stops on a minute wants the two numbers. */
+    customdata:st.s.map((v,i)=>[Math.exp(v),
+                                BW?Math.exp(blo[i]):null,
+                                BW?Math.exp(bhi[i]):null,
+                                (BW && REC.pa) ? 100*(REC.pa[i]==null?0:REC.pa[i]) : null]),
+    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata[0]:.2f}×</b>'+
+                  (BW ? '<br>range %{customdata[1]:.2f}× – %{customdata[2]:.2f}×'
+                      + (REC.pa ? '<br>%{customdata[3]:.0f}% of refits call this above the cut' : '')
+                      : '')+
                   '<br><i>click to read this minute</i><extra></extra>'});
   DOT = {x:x[NOW], y:st.s[NOW]};
   traces.push({x:[x[NOW]],y:[st.s[NOW]],mode:'markers',showlegend:false,type:'scatter',

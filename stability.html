@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTG feature stability</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="logo.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;600;700;800&display=swap"
+      rel="stylesheet">
+<style>
+  /* The fourth page, and the same furniture as the other three -- one app.
+     No plotting library here either: every mark is a div with a width or a
+     left offset. */
+  :root{
+    --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
+    --surface:#fcfcfb; --warm:#f0efec; --panel:#ffffff; --sel:#2a78d6;
+    --ink2:#52514e; --ink3:#8a8880;
+    --neutral:#a8a6a0;
+    --maxw:1180px;
+    /* The ten clinical families, in classify_timevarying.GROUPS order. The
+       page never cycles this list: a family without a colour would silently
+       borrow another family's, and the swatch is how a reader groups the
+       table by eye. */
+    --g0:#2a78d6; --g1:#d9822b; --g2:#3f9e5a; --g3:#c0392b; --g4:#7d5ba6;
+    --g5:#8d6e4f; --g6:#b5477f; --g7:#6a7f8d; --g8:#a08a2c; --g9:#2f9b9b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--surface)}
+  a{color:var(--sel)}
+  #wrap{display:flex;min-height:100vh}
+  #side{width:250px;flex:none;border-right:1px solid var(--line);padding:16px 14px;
+        position:sticky;top:0;height:100vh;overflow:auto;background:var(--warm)}
+  #main{flex:1;min-width:0;padding:14px 22px 60px}
+  #col{width:100%;max-width:var(--maxw);margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:19px;margin:0 0 4px}
+  h3{font-size:13px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;
+     letter-spacing:.5px;font-weight:700}
+  p{margin:8px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.035)}
+  .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
+  .lead{font-size:15px;color:var(--ink2);max-width:78ch}
+  .note{font-size:13px;color:var(--mut);margin-top:10px;padding-top:9px;
+    border-top:1px dashed var(--line)}
+  .nav{display:block;padding:9px 12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--panel);color:var(--ink2);text-decoration:none;font-size:14px;
+    font-weight:600;margin-bottom:8px}
+  .nav:hover{border-color:var(--ink3);color:var(--ink)}
+
+  /* THE CONTROL THIS PAGE EXISTS FOR. The three orderings disagree, and the
+     disagreement is the finding, so the reader gets to flip between them
+     rather than being handed one ranking and told it is "the" importance. */
+  .sortbtns{display:flex;flex-direction:column;gap:5px}
+  .sortbtns button{display:block;width:100%;text-align:left;padding:8px 11px;
+    border:1px solid var(--line);border-radius:10px;background:var(--panel);
+    color:var(--ink2);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  .sortbtns button:hover{border-color:var(--ink3)}
+  .sortbtns button.on{background:var(--sel);border-color:var(--sel);color:#fff}
+  .sortbtns button small{display:block;font-weight:400;font-size:11.5px;
+    opacity:.72;margin-top:1px;line-height:1.3}
+
+  .fams a{display:flex;align-items:center;gap:7px;padding:4px 8px;border-radius:8px;
+    color:var(--ink2);text-decoration:none;font-size:13px;cursor:pointer}
+  .fams a:hover{background:rgba(0,0,0,.05);color:var(--ink)}
+  .fams a.off{opacity:.38}
+  .fams a .sw{width:9px;height:9px;border-radius:3px;flex:none}
+  .fams a .n{margin-left:auto;font-size:11.5px;color:var(--ink3);
+    font-variant-numeric:tabular-nums}
+
+  .three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;
+    margin-top:12px}
+  @media (max-width:900px){.three{grid-template-columns:1fr}}
+
+  .stats{display:flex;flex-wrap:wrap;gap:26px;margin:10px 0 2px}
+  .stat b{display:block;font-size:24px;font-weight:800;line-height:1.15;
+    font-variant-numeric:tabular-nums}
+  .stat span{font-size:13px;color:var(--mut)}
+
+  .badge{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.3px;
+    text-transform:uppercase;padding:2px 7px;border-radius:999px;
+    margin-left:7px;border:1px solid var(--line);color:var(--mut);
+    background:var(--warm);vertical-align:1px}
+  .badge.needed{border-color:#f0c2c2;background:#fdeeee;color:#a4302f}
+  .badge.notrace{border-color:#d8c39a;background:#fdf6e7;color:#8a6516}
+
+  /* One row per feature, four columns that answer four different questions.
+     Laid out as a grid rather than a table so each cell can hold a drawing. */
+  .hdr,.frow{display:grid;
+    grid-template-columns:minmax(190px,1.25fr) minmax(150px,1.05fr)
+                          minmax(120px,1fr) minmax(112px,.86fr) minmax(120px,.94fr);
+    gap:14px;align-items:center}
+  .hdr{padding:0 0 7px;border-bottom:1px solid var(--line);margin-top:6px}
+  .hdr div{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;
+    color:var(--mut);font-weight:700}
+  .frow{padding:9px 0;border-bottom:1px solid var(--line)}
+  .frow:last-child{border-bottom:none}
+  .frow.dim{opacity:.36}
+  /* Narrow: the header row cannot survive a reflow, so each cell carries its
+     own label instead. Four unlabelled drawings stacked two-up is the one
+     layout this page must not degrade into -- the whole argument is which
+     column a number is in. */
+  .cell .clab{display:none;font-size:11px;text-transform:uppercase;
+    letter-spacing:.4px;color:var(--ink3);font-weight:700;margin-bottom:3px}
+  @media (max-width:1000px){
+    .hdr{display:none}
+    .frow{grid-template-columns:1fr 1fr;row-gap:10px;padding:12px 0}
+    .fname{grid-column:1 / -1}
+    .cell .clab{display:block}
+  }
+  @media (max-width:620px){
+    .frow{grid-template-columns:1fr}
+  }
+
+  .fname{min-width:0}
+  .fname .t{display:flex;align-items:center;gap:7px}
+  .fname .sw{width:9px;height:9px;border-radius:3px;flex:none}
+  .fname .lab{font-size:14px;font-weight:600;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .fname code{display:block;font-size:11.5px;color:var(--ink3);margin-top:1px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .fname .was{font-size:11.5px;color:var(--ink3)}
+
+  .track{position:relative;height:14px;background:var(--warm);border-radius:4px}
+  .bar{position:absolute;top:0;bottom:0;border-radius:4px;min-width:2px;
+    box-shadow:0 0 0 2px var(--surface)}
+  .whisk{position:absolute;top:6px;height:2px;background:var(--ink3);opacity:.9}
+  .cell .v{font-size:12.5px;color:var(--mut);margin-top:3px;
+    font-variant-numeric:tabular-nums}
+  .cell .v b{color:var(--ink);font-size:13px}
+
+  /* WHERE THE 30 REFITS PUT IT. One tick per seed, so a feature held in place
+     by 29 refits and thrown by one reads differently from a feature that is
+     genuinely unplaceable -- a bare span between the extremes cannot tell
+     those apart. */
+  .rk{position:relative;height:16px;background:var(--warm);border-radius:4px}
+  .rk .tick{position:absolute;top:2px;height:12px;width:2px;
+    background:var(--ink3);opacity:.5;border-radius:1px}
+  .rk .bootbar{position:absolute;top:5px;height:6px;border-radius:3px;
+    opacity:.95;min-width:3px}
+  .rk .med{position:absolute;top:0;height:16px;width:2px;background:var(--ink)}
+  .rk .ten{position:absolute;top:-2px;bottom:-2px;width:1px;
+    border-left:1px dotted var(--ink3)}
+
+  /* DROP-ONE, drawn against zero. Grey unless the paired interval clears it:
+     the colour is the claim, and a delta the refits cannot separate from
+     nothing does not get to look like a result. */
+  .zerotrack{position:relative;height:16px}
+  .zerotrack .zero{position:absolute;top:0;bottom:0;width:1px;background:var(--ink3)}
+  .zerotrack .dbar{position:absolute;top:5px;height:6px;border-radius:3px;
+    background:var(--neutral);min-width:3px}
+  .zerotrack .dbar.sig{background:var(--up)}
+  .zerotrack .dot{position:absolute;top:3px;width:10px;height:10px;
+    border-radius:99px;background:var(--neutral);margin-left:-5px;
+    box-shadow:0 0 0 2px var(--panel)}
+  .zerotrack .dot.sig{background:var(--up)}
+  .none{font-size:12.5px;color:var(--ink3)}
+
+  #tip{position:fixed;z-index:99;display:none;max-width:330px;padding:9px 11px;
+    border-radius:10px;background:#11110f;color:#f4f3ef;font-size:12.5px;
+    line-height:1.4;box-shadow:0 6px 22px rgba(0,0,0,.28);pointer-events:none}
+  #tip b{color:#fff}
+  #err{display:none;background:#fdeeee;border:1px solid #f0c2c2;color:#7a2422;
+    border-radius:12px;padding:12px 14px;margin:14px 0;font-size:14px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <a class="nav" href="index.html">&larr; Record explorer</a>
+    <a class="nav" href="importance.html">Feature importance</a>
+    <a class="nav" href="fairness.html">Subgroup fairness audit</a>
+
+    <h3 style="margin-top:18px">Order by</h3>
+    <div class="sortbtns" id="sortbtns"></div>
+    <p class="cap" style="font-size:12.5px">Three ways to ask which feature
+      matters. They do not agree, and that is the point of the page.</p>
+
+    <h3 style="margin-top:18px">Families</h3>
+    <div class="fams" id="fams"></div>
+    <p class="cap" style="font-size:12.5px">Click to hide a family. Ranks are
+      always the ones from the full model — hiding a family filters the table,
+      it does not refit anything.</p>
+  </div>
+
+  <div id="main"><div id="col">
+    <h1>Which features actually carry the score?</h1>
+    <p class="lead">The importance page ranks every feature by the size of its
+      SHAP contribution, from one fit. This page refits the whole recipe
+      <span id="nseeds">many</span> times over — each refit re-draws the fold
+      split and re-randomises the booster — and asks which parts of that
+      ranking survive, then checks the ranking against what the score actually
+      loses when a feature is taken away.</p>
+
+    <div id="err"></div>
+
+    <div class="card">
+      <div class="stats" id="head"></div>
+      <p class="note" id="headnote"></p>
+    </div>
+
+    <div class="card">
+      <h2>“Important” is three different questions</h2>
+      <p class="lead">Each column below answers one of them. A feature can be
+        first on one and nowhere on another, and several here are.</p>
+      <div class="three" id="explain"></div>
+      <p class="note"><b>Why they come apart.</b> Mean |SHAP| is
+        <em>attribution</em>: it divides the score's movement among the
+        features that produced it. Where several features carry the same
+        underlying signal, that division splits one signal many ways — each
+        share looks modest, and each feature is individually removable because
+        the others still carry it. Removal is the only one of the three that
+        answers “does the score need this”, and it is also the one that is
+        blind to a redundant <em>family</em>: dropping one deceleration
+        feature leaves the other seven in place.</p>
+    </div>
+
+    <div class="card">
+      <h2 id="tabletitle">Every feature, three ways</h2>
+      <p class="cap" id="tablecap"></p>
+      <div class="hdr">
+        <div>Feature</div>
+        <div>How hard the model leans on it</div>
+        <div>Where the refits put it</div>
+        <div>On its own</div>
+        <div>Cost of dropping it</div>
+      </div>
+      <div id="rows"></div>
+    </div>
+
+    <div class="card">
+      <h2>What this page cannot tell you</h2>
+      <p class="lead"><b>Drop-one cannot see a redundant family.</b> Every
+        deletion here removes exactly one column and leaves the other
+        thirty-six. A family whose members substitute for each other will
+        therefore show a whole row of harmless deletions while the family as a
+        whole is load-bearing. The family-level ablation that would settle it
+        has not been run.</p>
+      <p class="lead"><b>The deletions are ranked, not exhaustive.</b> Only the
+        top <span id="nabl">few</span> features by mean |SHAP| were refit
+        without, because each one costs <span id="nseeds2">n</span> refits. The
+        rest are blank in that column — blank means not measured, not
+        measured-and-harmless.</p>
+      <p class="lead"><b>The univariate column ignores everything else.</b> It
+        is one feature against the outcome at the horizon shown, so a feature
+        that only matters in combination scores low on it, and a feature
+        standing in for the passage of labour scores high without adding
+        anything the clock does not already say.</p>
+      <p class="lead"><b>Stability is not correctness.</b> A feature can sit at
+        the same rank across every refit and every bootstrap because the model
+        consistently leans on it for a reason that would not survive a
+        different hospital. Everything here is one cohort — CTU-CHB, one
+        hospital in Brno over 2010&ndash;2012 — re-drawn, never replaced.</p>
+    </div>
+
+    <p class="cap" id="foot"></p>
+  </div></div>
+</div>
+<div id="tip"></div>
+
+<script>
+const GVAR = i => `var(--g${i % 10})`;
+
+// The three orderings, each with the sentence that says what it measures. The
+// `pick` returns the sort key; `has` says whether a feature has a value at all,
+// so the unmeasured ones sink rather than sorting as if they were zero.
+const SORTS = [
+  {key:'imp', label:'How hard the model leans',
+   sub:'mean |SHAP| over every scored minute',
+   head:'Ranked by the average size of the feature’s pull on the log odds.',
+   pick:d => d.imp, has:d => d.imp !== null},
+  {key:'uni', label:'How well it separates alone',
+   sub:'its own AUROC, no model',
+   head:'Ranked by the feature on its own against the outcome — no model, no other features.',
+   pick:d => d.uni, has:d => d.uni !== null},
+  {key:'drop', label:'What the score loses without it',
+   sub:'paired drop-one refit',
+   head:'Ranked by how much mean AUROC falls when the feature is deleted and the model refit.',
+   pick:d => (d.drop === null ? null : -d.drop), has:d => d.drop !== null},
+];
+
+const EXPLAIN = [
+  {t:'How hard the model leans on it',
+   b:'The average size of its contribution to the log odds, over a record’s own scored minutes and then over records. This is what the importance page ranks by. It says where the score’s movement came from — not whether the score needed it.'},
+  {t:'How well it separates alone',
+   b:'The feature by itself against the outcome, at the horizon below. Model-free, so nothing is shared with a correlated neighbour. A feature can separate well alone and still be redundant once the rest of the table is present.'},
+  {t:'What the score loses without it',
+   b:'Delete the column, refit on the same seeds, and measure the change in mean AUROC. Paired, because an unpaired difference under ~0.01 on this pipeline is inside the seed noise. This is the only column that answers “does the score need this”.'},
+];
+
+let DATA = null, SORT = 'imp', HIDDEN = new Set();
+
+const f3 = v => (v === null || v === undefined) ? '—' : v.toFixed(3);
+const sgn4 = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(4);
+
+const tip = document.getElementById('tip');
+function bindTip(el, html){
+  el.addEventListener('mouseenter', () => { tip.innerHTML = html; tip.style.display = 'block'; });
+  el.addEventListener('mousemove', e => {
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 10) + 'px';
+    tip.style.top  = Math.max(8, e.clientY - h - 12) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
+/* A paired drop-one interval that sits wholly below zero. The page's editorial
+   line lives here: this predicate decides which features are called needed. */
+const needed = d => d.drop !== null && d.drop_hi < 0;
+
+function gidx(g){ return DATA.groups.indexOf(g); }
+
+function renderHead(){
+  const D = DATA;
+  const stable = D.features.filter(d => d.seed_top10 >= 0.9 && d.boot_top10 >= 0.9);
+  const need = D.features.filter(needed);
+  const el = (b, s, tipHtml) => {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    div.innerHTML = `<b>${b}</b><span>${s}</span>`;
+    if (tipHtml) bindTip(div, tipHtml);
+    return div;
+  };
+  const box = document.getElementById('head');
+  box.innerHTML = '';
+  box.append(
+    el(D.n_seeds, 'refits, each re-drawing the folds',
+       'Every refit re-draws the ' + D.n_folds + '-fold split AND re-randomises ' +
+       'the booster, so the spread across them is resampling instability in the ' +
+       'sense of Riley et al. 2023 — not a posterior.'),
+    el(D.auc_mean.toFixed(3) + ' ± ' + D.auc_sd.toFixed(3),
+       'AUROC at delivery, mean ± sd',
+       'Range across refits ' + D.auc_lo.toFixed(3) + '–' + D.auc_hi.toFixed(3) +
+       '. <b>An unpaired difference smaller than the sd is not a result.</b>'),
+    el(stable.length, 'features held in the top 10 by ≥90% of both tests',
+       'In the top 10 on at least 90% of the seed refits AND at least 90% of the ' +
+       D.n_boot.toLocaleString() + '-draw bootstrap over records.'),
+    el(need.length, 'whose deletion measurably costs AUROC',
+       'Of the ' + D.n_ablated + ' features refit without, only these have a paired ' +
+       '95% interval lying wholly below zero.'));
+  document.getElementById('headnote').innerHTML =
+    `<b>The ranking is stable; the dependence is not where the ranking says.</b> ` +
+    `${stable.length} features hold the top 10 across both kinds of resampling, ` +
+    `yet deleting all but ${need.length} of them costs the score nothing the refits ` +
+    `can measure. Those two sentences are not in conflict — see the note below the ` +
+    `three questions.`;
+}
+
+function renderExplain(){
+  const box = document.getElementById('explain');
+  box.innerHTML = '';
+  EXPLAIN.forEach(e => {
+    const d = document.createElement('div');
+    d.style.cssText = 'border:1px solid var(--line);border-radius:12px;padding:12px 13px;background:var(--surface)';
+    d.innerHTML = `<h3>${e.t}</h3><p class="cap" style="margin:0">${e.b}</p>`;
+    box.append(d);
+  });
+}
+
+function renderSide(){
+  const sb = document.getElementById('sortbtns');
+  sb.innerHTML = '';
+  SORTS.forEach(s => {
+    const b = document.createElement('button');
+    b.className = SORT === s.key ? 'on' : '';
+    b.innerHTML = `${s.label}<small>${s.sub}</small>`;
+    b.onclick = () => { SORT = s.key; syncUrl(); render(); };
+    sb.append(b);
+  });
+
+  const fm = document.getElementById('fams');
+  fm.innerHTML = '';
+  DATA.groups.forEach((g, i) => {
+    const n = DATA.features.filter(d => d.group === g).length;
+    const a = document.createElement('a');
+    a.className = HIDDEN.has(g) ? 'off' : '';
+    a.innerHTML = `<span class="sw" style="background:${GVAR(i)}"></span>` +
+                  `<span>${g}</span><span class="n">${n}</span>`;
+    a.onclick = () => {
+      HIDDEN.has(g) ? HIDDEN.delete(g) : HIDDEN.add(g);
+      syncUrl(); render();
+    };
+    fm.append(a);
+  });
+}
+
+function rowEl(d, impMax, uniMax){
+  const row = document.createElement('div');
+  row.className = 'frow';
+  const c = GVAR(gidx(d.group));
+
+  // --- name -------------------------------------------------------------
+  const name = document.createElement('div');
+  name.className = 'fname cell';
+  const notrace = d.group === 'Maternal history'
+    ? '<span class="badge notrace">not from the trace</span>' : '';
+  const nb = needed(d) ? '<span class="badge needed">needed</span>' : '';
+  name.innerHTML =
+    `<div class="t"><span class="sw" style="background:${c}"></span>` +
+    `<span class="lab">${d.label}</span>${nb}${notrace}</div>` +
+    `<code>${d.f}</code>`;
+  if (SORT !== 'imp')
+    name.insertAdjacentHTML('beforeend',
+      `<div class="was">#${Math.round(d.rank)} by mean |SHAP|</div>`);
+  bindTip(name, `<b>${d.label}</b>${d.unit ? ' (' + d.unit + ')' : ''}<br>` +
+    (d.doc || '') + `<br><br><b>${d.window}</b> · ${d.group}` +
+    (d.signed !== null
+      ? `<br>Signed mean ${sgn4(d.signed)} log odds — the direction it usually pulls.`
+      : ''));
+  row.append(name);
+
+  // --- mean |SHAP|, with the interval across refits -----------------------
+  const imp = document.createElement('div');
+  imp.className = 'cell';
+  const w = v => Math.max(0, Math.min(100, 100 * v / impMax));
+  imp.innerHTML =
+    `<div class="clab">How hard the model leans</div>` +
+    `<div class="track"><div class="bar" style="left:0;width:${w(d.imp)}%;background:${c}"></div>` +
+    `<div class="whisk" style="left:${w(d.imp_lo)}%;width:${Math.max(1, w(d.imp_hi) - w(d.imp_lo))}%"></div></div>` +
+    `<div class="v"><b>${d.imp.toFixed(4)}</b> log odds ` +
+    `<span style="color:var(--ink3)">[${d.imp_lo.toFixed(4)}, ${d.imp_hi.toFixed(4)}]</span></div>`;
+  row.append(imp);
+
+  // --- where the refits put it -------------------------------------------
+  const rk = document.createElement('div');
+  rk.className = 'cell';
+  const N = DATA.n_features;
+  const pos = r => 100 * (r - 0.5) / N;
+  let ticks = '';
+  d.ranks.forEach(r => { ticks += `<div class="tick" style="left:${pos(r)}%"></div>`; });
+  const bl = pos(d.brank_lo), bh = pos(d.brank_hi);
+  rk.innerHTML =
+    `<div class="clab">Where the refits put it</div>` +
+    `<div class="rk"><div class="ten" style="left:${pos(10.5)}%"></div>${ticks}` +
+    `<div class="bootbar" style="left:${bl}%;width:${Math.max(1.2, bh - bl)}%;background:${c}"></div>` +
+    `<div class="med" style="left:${pos(d.rank)}%"></div></div>` +
+    `<div class="v">rank <b>${Math.round(d.rank)}</b> ` +
+    `<span style="color:var(--ink3)">of ${N}, spanning ${d.rank_best}–${d.rank_worst}</span></div>`;
+  bindTip(rk, `<b>Rank across ${DATA.n_seeds} refits.</b> Each tick is one refit; ` +
+    `the black line is the median, the coloured bar the 95% interval from the ` +
+    `${DATA.n_boot.toLocaleString()}-draw bootstrap over records. Left is stronger. ` +
+    `The dotted line is rank 10.<br><br>In the top 10 on ` +
+    `<b>${(100 * d.seed_top10).toFixed(0)}%</b> of refits and ` +
+    `<b>${(100 * d.boot_top10).toFixed(0)}%</b> of record draws.`);
+  row.append(rk);
+
+  // --- univariate ----------------------------------------------------------
+  const un = document.createElement('div');
+  un.className = 'cell';
+  const unlab = '<div class="clab">On its own</div>';
+  if (d.uni === null) {
+    un.innerHTML = unlab + '<div class="none">not measured</div>';
+  } else {
+    const uw = v => Math.max(0, Math.min(100, 100 * (v - 0.5) / (uniMax - 0.5)));
+    un.innerHTML = unlab +
+      `<div class="track"><div class="bar" style="left:0;width:${uw(d.uni)}%;background:${c}"></div>` +
+      `<div class="whisk" style="left:${uw(d.uni_lo)}%;width:${Math.max(1, uw(d.uni_hi) - uw(d.uni_lo))}%"></div></div>` +
+      `<div class="v"><b>${d.uni.toFixed(3)}</b> ` +
+      `<span style="color:var(--ink3)">[${f3(d.uni_lo)}, ${f3(d.uni_hi)}]</span></div>`;
+    bindTip(un, `<b>AUROC of this feature alone</b> at ${DATA.horizon.toFixed(0)} ` +
+      `min before the end of the trace, over ${DATA.n_records} records.<br><br>` +
+      `Direction-free: ${d.uni_dir < 0
+        ? 'higher values go with a <b>lower</b> chance of acidaemia here'
+        : 'higher values go with a <b>higher</b> chance of acidaemia here'}. ` +
+      `0.5 means no separation either way.<br><br>` +
+      `Measured on ${(100 * d.uni_measured).toFixed(0)}% of records at that minute.`);
+  }
+  row.append(un);
+
+  // --- drop-one ------------------------------------------------------------
+  const dr = document.createElement('div');
+  dr.className = 'cell';
+  const drlab = '<div class="clab">Cost of dropping it</div>';
+  if (d.drop === null) {
+    dr.innerHTML = drlab + '<div class="none">not refit without</div>';
+    bindTip(dr, 'Only the top features by mean |SHAP| were refit without. ' +
+      'Blank means <b>not measured</b>, not measured-and-harmless.');
+  } else {
+    const span = Math.max(...DATA.features.filter(x => x.drop !== null)
+      .map(x => Math.max(Math.abs(x.drop_lo), Math.abs(x.drop_hi))));
+    const px = v => 50 + 50 * v / (span * 1.06);
+    const sig = needed(d) ? ' sig' : '';
+    const l = px(d.drop_lo), h = px(d.drop_hi);
+    dr.innerHTML = drlab +
+      `<div class="zerotrack"><div class="zero" style="left:50%"></div>` +
+      `<div class="dbar${sig}" style="left:${l}%;width:${Math.max(1.2, h - l)}%"></div>` +
+      `<div class="dot${sig}" style="left:${px(d.drop)}%"></div></div>` +
+      `<div class="v"><b style="${needed(d) ? 'color:var(--up)' : ''}">${sgn4(d.drop)}</b> ` +
+      `<span style="color:var(--ink3)">AUROC, hurts ${(100 * d.drop_hurts).toFixed(0)}% of seeds</span></div>`;
+    bindTip(dr, `<b>Refit ${DATA.n_seeds} times without ${d.f}</b>, paired against ` +
+      `the same seeds with it.<br><br>Change in mean AUROC over horizons: ` +
+      `<b>${sgn4(d.drop)}</b>, 95% interval [${sgn4(d.drop_lo)}, ${sgn4(d.drop_hi)}].<br><br>` +
+      (needed(d)
+        ? 'The interval lies wholly below zero: the score is <b>measurably worse</b> without it.'
+        : 'The interval crosses zero: the refits cannot show the score is worse without it. ' +
+          'That is redundancy given the other features, not proof of irrelevance.'));
+  }
+  row.append(dr);
+  return row;
+}
+
+function render(){
+  renderSide();
+  const s = SORTS.find(x => x.key === SORT);
+  const shown = DATA.features.filter(d => !HIDDEN.has(d.group));
+  // Features with no value on the active key sink to the bottom in their
+  // mean-|SHAP| order rather than sorting as if their missing value were zero.
+  const sorted = shown.slice().sort((a, b) => {
+    const ha = s.has(a), hb = s.has(b);
+    if (ha !== hb) return ha ? -1 : 1;
+    if (!ha) return a.rank - b.rank;
+    return s.pick(b) - s.pick(a);
+  });
+
+  const impMax = Math.max(...DATA.features.map(d => d.imp_hi));
+  const uniMax = Math.max(...DATA.features.map(d => d.uni_hi ?? 0.5), 0.72);
+
+  const box = document.getElementById('rows');
+  box.innerHTML = '';
+  sorted.forEach(d => box.append(rowEl(d, impMax, uniMax)));
+
+  document.getElementById('tablecap').innerHTML = s.head +
+    ` Showing ${sorted.length} of ${DATA.features.length} features` +
+    (HIDDEN.size ? ` (${HIDDEN.size} famil${HIDDEN.size === 1 ? 'y' : 'ies'} hidden).` : '.') +
+    ` Hover any cell for what it means.`;
+}
+
+function syncUrl(){
+  const p = new URLSearchParams();
+  if (SORT !== 'imp') p.set('by', SORT);
+  if (HIDDEN.size) p.set('hide', [...HIDDEN].join('|'));
+  const q = p.toString();
+  history.replaceState(null, '', q ? '?' + q : location.pathname);
+}
+
+fetch('data/stability.json')
+  .then(r => { if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return r.json(); })
+  .then(d => {
+    DATA = d;
+    const p = new URLSearchParams(location.search);
+    if (SORTS.some(s => s.key === p.get('by'))) SORT = p.get('by');
+    (p.get('hide') || '').split('|').filter(Boolean)
+      .forEach(g => { if (d.groups.includes(g)) HIDDEN.add(g); });
+
+    document.getElementById('nseeds').textContent = d.n_seeds;
+    document.getElementById('nseeds2').textContent = d.n_seeds;
+    document.getElementById('nabl').textContent = d.n_ablated;
+    document.getElementById('foot').textContent =
+      `Built by feature_stability.py: ${d.n_seeds} refits x ${d.n_folds} folds over ` +
+      `${d.n_records} records and ${d.n_rows.toLocaleString()} scored minutes ` +
+      `(${(100 * d.prevalence).toFixed(1)}% acidaemic), ` +
+      `${d.n_boot.toLocaleString()} bootstrap draws, ` +
+      `${d.n_ablated} features refit without. Feature set: ${d.feature_set}` +
+      `${d.maternal ? ' plus maternal history' : ''}.`;
+    renderHead();
+    renderExplain();
+    render();
+  })
+  .catch(e => {
+    const box = document.getElementById('err');
+    box.style.display = 'block';
+    box.innerHTML = `<b>Could not load data/stability.json</b> (${e.message}).<br>
+      Run <code>python feature_stability.py --maternal --ablate 12 --no-show</code>,
+      then serve the folder — <code>fetch</code> will not read a file:// path.`;
+  });
+</script>
+</body>
+</html>
