@@ -275,7 +275,8 @@
 
     <h3>Model arm</h3>
     <div id="srcpills">
-      <button class="pill on" data-s="detector">Automated</button>
+      <button class="pill on" data-s="morph57">57-feature</button>
+      <button class="pill" data-s="detector">Legacy automated</button>
       <button class="pill" data-s="expert">Expert</button>
       <button class="pill" data-s="win30">30-min set</button>
     </div>
@@ -777,23 +778,28 @@ function bindTips(box, sel, fill){
   };
 }
 
-/* The same three arms the record explorer switches between, and the same
+/* The same four arms the record explorer switches between, and the same
    directories -- see the SRC_DIR comment there. The ranking is a mean over
    per-record |phi|, so it is not a re-sort of one table: each arm is a
    different model and every bar moves. The 30-min arm changes the feature
    LIST rather than the events, so it is the one where rows appear and
    disappear rather than merely reorder. */
-const SRC_DIR = {detector:'data', expert:'data-expert', win30:'data-win30'};
+const SRC_DIR = {
+  morph57:'data57', detector:'data', expert:'data-expert', win30:'data-win30'
+};
 const SRC_NOTE = {
-  detector:'Events from the pipeline detector (ctg_annotate.py) — what the '
-    + 'shipped model was trained on.',
+  morph57:'57-feature two-stage model: the prior 51 inputs plus deceleration '
+    + 'and contraction area over the last 30 minutes, last 60 minutes, and '
+    + 'cumulatively. Delivery AUROC 0.723 in the displayed five-fold fit; '
+    + 'mean 0.712 ± 0.009 across 50 refits.',
+  detector:'Legacy 29-feature model trained on the pipeline detector events.',
   expert:'Events hand-marked by clinicians, and a model retrained on them. '
     + 'Fewer records reach the scoring threshold, so the counts change too.',
   win30:'Same detector events, 30 inputs all measured over the last 30 '
     + 'minutes — no 60-minute or whole-labour spans. Every cumulative feature '
     + 'the shipped set leans on is absent here, so this ranking is what the '
     + 'model finds when it can only see the recent window.'};
-let SRC = 'detector';
+let SRC = 'morph57';
 const DATA = ()=> SRC_DIR[SRC];
 
 async function loadSource(){

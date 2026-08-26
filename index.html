@@ -298,7 +298,8 @@
 
     <h3>Model arm</h3>
     <div id="srcpills">
-      <button class="pill on" data-s="detector">Automated</button>
+      <button class="pill on" data-s="morph57">57-feature</button>
+      <button class="pill" data-s="detector">Legacy automated</button>
       <button class="pill" data-s="expert">Expert</button>
       <button class="pill" data-s="win30">30-min set</button>
     </div>
@@ -408,10 +409,15 @@
    29 that mix 30-minute, 60-minute and whole-labour spans. What the arms have
    in common is that each is a different model, which is why they cannot be
    blended and why the whole page reloads. */
-const SRC_DIR = {detector:'data', expert:'data-expert', win30:'data-win30'};
+const SRC_DIR = {
+  morph57:'data57', detector:'data', expert:'data-expert', win30:'data-win30'
+};
 const SRC_NOTE = {
-  detector:'Events from the pipeline detector (ctg_annotate.py) — what the '
-    + 'shipped model was trained on.',
+  morph57:'57-feature two-stage model: the prior 51 inputs plus deceleration '
+    + 'and contraction area over the last 30 minutes, last 60 minutes, and '
+    + 'cumulatively. Delivery AUROC 0.723 in the displayed five-fold fit; '
+    + 'mean 0.712 ± 0.009 across 50 refits.',
+  detector:'Legacy 29-feature model trained on the pipeline detector events.',
   expert:'Events hand-marked by clinicians. Fewer marks, and a model retrained '
     + 'on them, so the score and every contribution change with the strip.',
   win30:'Same detector events, different feature list: 30 inputs, every one of '
@@ -420,7 +426,7 @@ const SRC_NOTE = {
     + 'set\u2019s 0.693, and it reads better through a labour (peak risk '
     + '0.690 vs 0.682) but worse early on long recordings (0.564 vs 0.628 at '
     + '90 minutes out).'};
-let SRC = 'detector';
+let SRC = 'morph57';
 const DATA = ()=> SRC_DIR[SRC];
 
 const FAM = {
@@ -909,10 +915,7 @@ async function setSource(src){
       b.classList.toggle('on', b.dataset.s === prevSrc));
     document.getElementById('srcnote').textContent =
       'Could not load the ' + src + ' arm — still showing ' + prevSrc
-      + '. That export is missing: re-run export_static_site.py --data-dir '
-      + SRC_DIR[src] + (src === 'win30'
-          ? ' against a --feature-set win30 trace.'
-          : ' --events ' + src + '.');
+      + '. Its local export directory is missing: ' + SRC_DIR[src] + '.';
   }finally{
     pills.classList.remove('busy');
   }
