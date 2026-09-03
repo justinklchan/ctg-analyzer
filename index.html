@@ -82,6 +82,8 @@
   label.check.off .amt{opacity:.45}
   #pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
   #srcpills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 6px}
+  #risktabs{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}
+  #risktabs .pill{font-size:14px;padding:6px 14px}
   /* Dimmed rather than disabled while a switch is in flight: every fetch on the
      page has to be replaced, and a second click halfway through would leave the
      record showing one arm's curve over the other arm's strip. */
@@ -356,6 +358,16 @@
 
     <section class="card">
       <h2>Risk trajectory and tracing</h2>
+      <!-- Two scores share this panel. The first is the hypoxia score (cord pH
+           < 7.20 at birth). The second is a separate model with a different
+           outcome: whether the NEXT 30 minutes of this recording will carry a
+           heavy deceleration burden. Same inputs, same cursor and zoom. -->
+      <div id="risktabs">
+        <button class="pill on" data-t="hyp" type="button">Hypoxia risk (cord pH &lt; 7.20)</button>
+        <button class="pill" data-t="burden" type="button">Deceleration burden ahead (next 30 min)</button>
+      </div>
+      <p class="cap" id="burdennote" style="display:none"></p>
+      <div id="bfig" style="display:none"></div>
       <div id="fig"></div>
       <!-- The same cursor as clicking the curve, scrubbable. Clicking is exact
            but only reaches minutes you can see; the slider walks every one. -->
@@ -2321,5 +2333,6 @@ boot();
 </script>
 <!-- One tip for the whole page, moved and refilled on hover. -->
 <div id="tip" role="tooltip" aria-hidden="true"></div>
+<script src="decel_burden.js"></script>
 </body>
 </html>
